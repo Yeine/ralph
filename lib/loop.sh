@@ -78,10 +78,9 @@ run_worker() {
   BELL_ON_END=false
 
   # Ensure final counters are written on exit (covers normal exit, TERM, and INT)
-  # shellcheck disable=SC2064
-  trap "write_worker_counters '$worker_id'" EXIT
-  trap "write_worker_counters '$worker_id'; exit 143" TERM
-  trap "write_worker_counters '$worker_id'; exit 130" INT
+  trap 'write_worker_counters "$WORKER_ID"' EXIT
+  trap 'write_worker_counters "$WORKER_ID"; exit 143' TERM
+  trap 'write_worker_counters "$WORKER_ID"; exit 130' INT
 
   local iteration=1
 
