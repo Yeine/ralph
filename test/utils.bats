@@ -121,6 +121,32 @@ teardown() { _common_teardown; }
   [[ "$id" == *-* ]]
 }
 
+# --- get_file_state_hash ---
+
+@test "get_file_state_hash: returns empty outside git repo" {
+  local tmp
+  tmp="$(mktemp -d)"
+  pushd "$tmp" >/dev/null
+  run get_file_state_hash
+  popd >/dev/null
+  rm -rf "$tmp"
+  assert_output ""
+}
+
+@test "get_file_state_hash: returns 8-char hex inside repo" {
+  command -v git >/dev/null 2>&1 || skip "git not available"
+  git -C "$RALPH_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || skip "not a git repo"
+  if ! command -v md5sum >/dev/null 2>&1 && ! command -v md5 >/dev/null 2>&1; then
+    skip "no md5 tool available"
+  fi
+
+  pushd "$RALPH_ROOT" >/dev/null
+  run get_file_state_hash
+  popd >/dev/null
+  assert_success
+  [[ "$output" =~ ^[0-9a-fA-F]{8}$ ]]
+}
+
 # --- truncate_ellipsis ---
 
 @test "truncate_ellipsis: returns empty for empty input" {
