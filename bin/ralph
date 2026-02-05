@@ -17,6 +17,13 @@ set -euo pipefail
 # Resolve symlinks portably (readlink -f not available on stock macOS)
 _resolve_symlink() {
   local target="$1"
+  if [[ "$target" != */* ]]; then
+    local resolved
+    resolved="$(command -v -- "$target" 2>/dev/null || true)"
+    if [[ -n "$resolved" && "$resolved" == /* ]]; then
+      target="$resolved"
+    fi
+  fi
   while [[ -L "$target" ]]; do
     local dir
     dir="$(cd "$(dirname "$target")" && pwd)"
@@ -97,6 +104,44 @@ TAIL_PIDS=()
 # CLI parsing
 # -----------------------------------------------------------------------------
 _require_arg() { [[ $# -ge 2 ]] || { echo "Error: Option $1 requires an argument" >&2; exit 1; }; }
+_validate_path_arg() {
+  local label="$1" path="$2"
+  if [[ -z "$path" ]]; then
+    log_err "${label} path cannot be empty"
+    exit 1
+  fi
+  if [[ "$path" == *$'\n'* || "$path" == *$'\r'* ]]; then
+    log_err "${label} path contains newline characters"
+    exit 1
+  fi
+  if [[ "$path" == -* ]]; then
+    log_err "${label} path cannot start with '-' (use ./<path> to disambiguate)"
+    exit 1
+  fi
+}
+
+_validate_log_file() {
+  local path="$1"
+  _validate_path_arg "Log file" "$path"
+  if [[ -e "$path" && ! -f "$path" ]]; then
+    log_err "Log path exists but is not a regular file: $path"
+    exit 1
+  fi
+  local dir
+  dir="$(dirname -- "$path")"
+  if [[ ! -d "$dir" ]]; then
+    log_err "Log directory does not exist: $dir"
+    exit 1
+  fi
+  if [[ ! -w "$dir" ]]; then
+    log_err "Log directory is not writable: $dir"
+    exit 1
+  fi
+  if [[ -e "$path" && ! -w "$path" ]]; then
+    log_err "Log file is not writable: $path"
+    exit 1
+  fi
+}
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -165,17 +210,26 @@ if [[ "$NUM_WORKERS" -lt 1 || "$NUM_WORKERS" -gt 16 ]]; then
   exit 1
 fi
 
+_validate_path_arg "Prompt file" "$PROMPT_FILE"
+if [[ -n "$LOG_FILE" ]]; then
+  _validate_log_file "$LOG_FILE"
+fi
+
 # -----------------------------------------------------------------------------
 # Caffeinate: re-exec under caffeinate if requested
 # -----------------------------------------------------------------------------
 if [[ "$USE_CAFFEINATE" == true && -z "${RALPH_CAFFEINATED:-}" ]]; then
+  if ! command -v caffeinate >/dev/null 2>&1; then
+    log_err "caffeinate not found (only available on macOS)"
+    exit 1
+  fi
   log_info "Running with caffeinate (Mac will stay awake)"
   export RALPH_CAFFEINATED=1
   filtered_args=()
   for arg in "${ORIGINAL_ARGS[@]}"; do
     [[ "$arg" != "-c" && "$arg" != "--caffeinate" ]] && filtered_args+=("$arg")
   done
-  exec caffeinate -i "$0" "${filtered_args[@]}"
+  exec caffeinate -i "$RALPH_REAL_PATH" "${filtered_args[@]}"
 fi
 
 # -----------------------------------------------------------------------------
@@ -193,6 +247,10 @@ Create a RALPH_TASK.md with your task instructions, for example:
   Read TODO.md and find the first unchecked item.
   Complete it, then mark it [x] done.
 EOF
+  exit 1
+fi
+if [[ ! -r "$PROMPT_FILE" ]]; then
+  log_err "Prompt file '$PROMPT_FILE' is not readable"
   exit 1
 fi
 
@@ -338,6 +396,7 @@ cleanup() {
   exit 0
 }
 trap cleanup INT TERM
+trap 'reapply_scroll_region' WINCH
 
 # -----------------------------------------------------------------------------
 # Run
