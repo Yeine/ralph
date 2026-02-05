@@ -36,6 +36,14 @@ teardown() { _common_teardown; }
   assert_output "2"
 }
 
+@test "get_attempts: treats non-numeric attempts as 0" {
+  local key
+  key="$(task_hash "weird task")"
+  printf '{"%s":{"task":"weird task","attempts":"oops","skipped":false}}\n' "$key" > "$ATTEMPTS_FILE"
+  run get_attempts "weird task"
+  assert_output "0"
+}
+
 # --- increment_attempts ---
 
 @test "increment_attempts: increases count and returns new value" {
@@ -110,4 +118,21 @@ teardown() { _common_teardown; }
   assert_output "0"
   run get_skipped_tasks
   assert_output ""
+}
+
+# --- show_attempts ---
+
+@test "show_attempts: prints empty state when no attempts" {
+  run show_attempts
+  assert_output --partial "Current attempt tracking state"
+  assert_output --partial "No attempts tracked yet."
+}
+
+@test "show_attempts: lists attempts and skipped tasks" {
+  increment_attempts "task A" >/dev/null
+  increment_attempts "task A" >/dev/null
+  mark_skipped "task B"
+  run show_attempts
+  assert_output --partial "task A: 2 attempts"
+  assert_output --partial "task B: SKIPPED (attempts=0)"
 }
