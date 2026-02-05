@@ -347,6 +347,17 @@ fi
 # -----------------------------------------------------------------------------
 # Signal handling
 # -----------------------------------------------------------------------------
+# Recursively kill a process and all its descendants (children first).
+_kill_tree() {
+  local pid="$1"
+  local children
+  children="$(pgrep -P "$pid" 2>/dev/null)" || true
+  for child in $children; do
+    _kill_tree "$child"
+  done
+  kill "$pid" 2>/dev/null || true
+}
+
 cleanup() {
   echo ""
   log_warn "Caught interrupt signal, shutting down..."
@@ -359,10 +370,9 @@ cleanup() {
     for pid in "${TAIL_PIDS[@]}"; do
       kill "$pid" 2>/dev/null || true
     done
-    # Kill worker processes and their children
+    # Kill worker processes and their entire process trees
     for pid in "${WORKER_PIDS[@]}"; do
-      pkill -P "$pid" 2>/dev/null || true
-      kill "$pid" 2>/dev/null || true
+      _kill_tree "$pid"
     done
     # BUG FIX #6: Wait for workers to actually terminate instead of arbitrary sleep
     for pid in "${WORKER_PIDS[@]}"; do
@@ -381,11 +391,13 @@ cleanup() {
       ITERATION_COUNT="$(echo "$totals" | awk '{print $3}')"
     fi
   else
+    # Kill engine and its entire process tree (codex/claude, perl timeout, tee, jq)
     if [[ -n "${CLAUDE_PID:-}" ]]; then
-      kill "$CLAUDE_PID" 2>/dev/null || true
+      _kill_tree "$CLAUDE_PID"
     fi
   fi
 
+  # Catch any remaining children
   pkill -P $$ 2>/dev/null || true
   show_run_summary
   bell end
@@ -396,7 +408,6 @@ cleanup() {
   exit 0
 }
 trap cleanup INT TERM
-trap 'reapply_scroll_region' WINCH
 
 # -----------------------------------------------------------------------------
 # Run
