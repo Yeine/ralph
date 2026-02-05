@@ -47,14 +47,18 @@ run_engine() {
 
   (
     set +e
+    # Ensure pipeline processes are killed when this subshell exits
+    _engine_self="$(sh -c 'echo $PPID')"
+    trap 'pkill -P "$_engine_self" 2>/dev/null; exit' INT TERM
 
     # Helper: display + capture a line of output
     _process_line() {
       local line="$1"
       if [[ "$quiet" == "false" ]]; then
-        # Only print key signal lines — tool-call announcements and agent
-        # prose are suppressed (they still go to $output_file below).
-        if [[ "$line" == "PICKING:"* ]]; then
+        if [[ "$line" == ">>> "* ]]; then
+          # Tool-call announcements: compact dim format
+          printf "%b\n" "${DIM}${line}${NC}"
+        elif [[ "$line" == "PICKING:"* ]]; then
           printf "%b\n" "${BOLD}${ORANGE}${line}${NC}"
         elif [[ "$line" == "DONE:"* || "$line" == "MARKING"* ]]; then
           printf "%b\n" "${BOLD}${GREEN}${line}${NC}"
