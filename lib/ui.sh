@@ -131,8 +131,9 @@ right_align() {
 # Strip ANSI escape sequences from a string (pipe helper)
 strip_ansi() {
   local s="$1"
-  # Remove all CSI sequences: ESC[ ... m (colors, bold, dim, etc.)
-  printf '%s' "$s" | sed $'s/\033\[[0-9;]*m//g'
+  # Use %b to convert literal \033 strings (from colors.sh) to actual ESC bytes
+  # before sed strips them.  Without %b, literal \033 text passes through unmatched.
+  printf '%b' "$s" | sed $'s/\033\[[0-9;]*m//g'
 }
 
 # Return the visual column width of a string (ANSI codes excluded)
@@ -192,53 +193,40 @@ wait_with_countdown() {
 }
 
 # -----------------------------------------------------------------------------
-# Dynamic banner — fixed at top of scroll region, updated in-place
+# Dynamic banner — printed as normal scrolling output (no cursor tricks)
 # Always renders exactly 5 lines: box_top + line1 + line2 + quote + box_bottom
 # -----------------------------------------------------------------------------
 
-# Banner height is constant so scroll region stays stable (used in iteration.sh)
+# Banner height constant (5 lines).
 # shellcheck disable=SC2034
 BANNER_LINES=5
 
-# Banner state flag — set by init_banner, cleared by reset_scroll_region.
-_BANNER_ACTIVE=0
+# No-op stubs — scroll regions removed for reliability.
+reset_scroll_region() { :; }
+reapply_scroll_region() { :; }
 
-# Banner update interval in seconds (used by the monitor loop in iteration.sh).
-# shellcheck disable=SC2034
-BANNER_UPDATE_INTERVAL=2
+# Print a compact inline status line (called periodically by the monitor).
+print_status_line() {
+  local elapsed_sec="$1" iter_timeout="$2"
+  local tool_count="$3" max_tools="$4"
+  local picked_task="$5"
 
-# Set terminal scroll region so lines below the banner scroll independently.
-_setup_scroll_region() {
-  is_tty || return 0
-  local term_rows
-  term_rows="$(tput lines 2>/dev/null || echo 24)"
-  local banner_end=$(( BANNER_LINES + 1 ))
-  printf '\033[%d;%dr' "$banner_end" "$term_rows"   # set scroll region
-  printf '\033[%d;1H' "$banner_end"                  # move cursor there
-}
+  local task_display=""
+  if [[ -n "$picked_task" ]]; then
+    task_display=" | $(truncate_ellipsis "$picked_task" 40)"
+  fi
 
-# Reset scroll region to full terminal.
-reset_scroll_region() {
-  is_tty || return 0
-  _BANNER_ACTIVE=0
-  printf '\033[r'           # reset to full terminal
-}
+  local time_color tools_color elapsed_pct=0 tools_pct=0
+  if [[ "$iter_timeout" -gt 0 ]]; then
+    elapsed_pct=$(( (elapsed_sec * 100) / iter_timeout ))
+  fi
+  if [[ "$max_tools" -gt 0 ]]; then
+    tools_pct=$(( (tool_count * 100) / max_tools ))
+  fi
+  time_color="$(color_by_pct "$elapsed_pct" 60 85)"
+  tools_color="$(color_by_pct "$tools_pct" 60 85)"
 
-# Reapply scroll region after terminal resize (SIGWINCH).
-# No-op when no banner is active.
-reapply_scroll_region() {
-  [[ "$_BANNER_ACTIVE" -eq 1 ]] || return 0
-  _setup_scroll_region
-}
-
-# Initialize the dynamic banner: clear screen, render at row 1, set scroll region.
-# Call this once at iteration start (TTY + non-quiet only).
-init_banner() {
-  is_tty || return 0
-  _BANNER_ACTIVE=1
-  printf '\033[2J\033[H'    # clear screen, cursor to row 1 col 1
-  render_dynamic_banner "$@"
-  _setup_scroll_region
+  printf "  %b\n" "${DIM}~${NC} ${time_color}${elapsed_sec}s/${iter_timeout}s${NC} ${tools_color}#${tool_count}/${max_tools}${NC}${task_display}"
 }
 
 # Render the dynamic banner (exactly BANNER_LINES lines).
@@ -264,7 +252,7 @@ render_dynamic_banner() {
   # Task slot
   local task_slot=""
   if [[ -n "$picked_task" ]]; then
-    task_slot="$(truncate_ellipsis "$picked_task" 40)"
+    task_slot="$(truncate_ellipsis "$picked_task" 28)"
   fi
 
   # Line 1: Iter + Task + State
@@ -290,7 +278,7 @@ render_dynamic_banner() {
 
   # Line 2: Time + counts + meters
   local line2
-  line2="${DIM}${time_short}${NC}  ${DIM}|${NC}  ${GREEN}v${completed}${NC} ${RED}x${failed}${NC} ${YELLOW}>${skipped}${NC}  ${DIM}|${NC}  ${time_color}T ${elapsed_sec}s/${iter_timeout}s${NC}  ${DIM}|${NC}  ${tools_color}# ${tool_count}/${max_tools}${NC}"
+  line2="${DIM}${time_short}${NC} ${DIM}|${NC} ${GREEN}v${completed}${NC} ${RED}x${failed}${NC} ${YELLOW}>${skipped}${NC} ${DIM}|${NC} ${time_color}T ${elapsed_sec}s/${iter_timeout}s${NC} ${DIM}|${NC} ${tools_color}# ${tool_count}/${max_tools}${NC}"
 
   # Quote line (always present for fixed height)
   local line3="${DIM}${MAGENTA}\"${quote}\"${NC}"
@@ -302,18 +290,6 @@ render_dynamic_banner() {
   box_bottom
 }
 
-# Redraw the banner in-place without disturbing the scroll region.
-# Moves to row 1, redraws, then repositions cursor at the bottom of the
-# scroll region.  We intentionally avoid \033[s / \033[u (save/restore cursor)
-# because the background monitor races with foreground output, causing the
-# cursor to jump back to a stale position.  Moving to the bottom is safe:
-# the scroll region auto-scrolls so new output always appears at the bottom.
-update_banner_inplace() {
-  is_tty || return 0
-  printf '\033[1;1H'         # move to row 1, col 1
-  render_dynamic_banner "$@"
-  printf '\033[999;1H'       # move to bottom of scroll region
-}
 
 
 # -----------------------------------------------------------------------------
