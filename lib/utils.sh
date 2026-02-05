@@ -48,10 +48,10 @@ bell() {
 run_with_timeout() {
   local seconds="$1"; shift
   if command -v gtimeout >/dev/null 2>&1; then
-    gtimeout "${seconds}" "$@"
+    gtimeout "${seconds}" -- "$@"
     return $?
   elif command -v timeout >/dev/null 2>&1; then
-    timeout "${seconds}" "$@"
+    timeout "${seconds}" -- "$@"
     return $?
   else
     # Perl fork+exec+waitpid with proper signal handling
@@ -63,6 +63,8 @@ run_with_timeout() {
       if ($pid == 0) { exec @ARGV; die "exec failed: $!" }
       eval {
         local $SIG{ALRM} = sub { kill "TERM", $pid; die "timeout\n" };
+        local $SIG{INT}  = sub { kill "INT",  $pid; waitpid($pid, WNOHANG); exit 130; };
+        local $SIG{TERM} = sub { kill "TERM", $pid; waitpid($pid, WNOHANG); exit 143; };
         alarm $timeout;
         waitpid($pid, 0);
         alarm 0;
@@ -72,7 +74,7 @@ run_with_timeout() {
         exit 124;
       }
       exit ($? >> 8);
-    ' "$seconds" "$@"
+    ' -- "$seconds" "$@"
     return $?
   fi
 }
@@ -95,10 +97,23 @@ task_hash() {
 # Git state hash to detect file changes (portable macOS/Linux)
 # Returns empty string on failure (safe for set -e)
 get_file_state_hash() {
+  command -v git >/dev/null 2>&1 || { echo ""; return 0; }
+  local repo_root
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo ""; return 0; }
+  case "$PWD/" in
+    "$repo_root"/*) ;;
+    *) echo ""; return 0 ;;
+  esac
   if command -v md5sum >/dev/null 2>&1; then
     git status --porcelain 2>/dev/null | md5sum 2>/dev/null | cut -c1-8 || echo ""
+  elif command -v md5 >/dev/null 2>&1; then
+    if md5 -q </dev/null >/dev/null 2>&1; then
+      git status --porcelain 2>/dev/null | md5 -q 2>/dev/null | cut -c1-8 || echo ""
+    else
+      git status --porcelain 2>/dev/null | md5 2>/dev/null | awk '{print $NF}' | cut -c1-8 || echo ""
+    fi
   else
-    git status --porcelain 2>/dev/null | md5 2>/dev/null | cut -c1-8 || echo ""
+    echo ""
   fi
 }
 
@@ -125,7 +140,7 @@ show_resources() {
 
   local docker_stats
   docker_stats="$(docker stats --no-stream --format "{{.Name}}: CPU={{.CPUPerc}} MEM={{.MemUsage}}" 2>/dev/null \
-    | grep -E "$pattern" | head -3 || true)"
+    | grep -E -- "$pattern" | head -3 || true)"
   if [[ -n "$docker_stats" ]]; then
     log_info "Resources"
     while IFS= read -r line; do
