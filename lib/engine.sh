@@ -52,35 +52,35 @@ run_engine() {
     _process_line() {
       local line="$1"
       if [[ "$quiet" == "false" ]]; then
-        if [[ "$line" == ">>> "* ]]; then
-          case "$line" in
-            ">>> Read:"*)  printf "%b\n" "${CYAN}${line}${NC}" ;;
-            ">>> Edit:"*)  printf "%b\n" "${YELLOW}${line}${NC}" ;;
-            ">>> Write:"*) printf "%b\n" "${GREEN}${line}${NC}" ;;
-            ">>> Bash:"*)  printf "%b\n" "${MAGENTA}${line}${NC}" ;;
-            *)             printf "%b\n" "${DIM}${line}${NC}" ;;
-          esac
-        elif [[ "$line" == "PICKING:"* ]]; then
+        # Only print key signal lines — tool-call announcements and agent
+        # prose are suppressed (they still go to $output_file below).
+        if [[ "$line" == "PICKING:"* ]]; then
           printf "%b\n" "${BOLD}${ORANGE}${line}${NC}"
         elif [[ "$line" == "DONE:"* || "$line" == "MARKING"* ]]; then
           printf "%b\n" "${BOLD}${GREEN}${line}${NC}"
-        else
-          printf "%s\n" "$line"
+        elif [[ "$line" == "ATTEMPT_FAILED:"* ]]; then
+          printf "%b\n" "${BOLD}${RED}${line}${NC}"
+        elif [[ "$line" == "EXIT_SIGNAL:"* ]]; then
+          printf "%b\n" "${BOLD}${CYAN}${line}${NC}"
         fi
       fi
 
-      if echo "$line" | grep -qiE "^(PICKING|WRITING|TESTING|PASSED|MARKING|DONE|REMAINING|EXIT_SIGNAL|ATTEMPT_FAILED|>>> )"; then
-        echo "$line" >> "$output_file"
-        [[ -n "$log_file" ]] && echo "$line" >> "$log_file"
+      if printf '%s\n' "$line" | grep -qiE "^(PICKING|WRITING|TESTING|PASSED|MARKING|DONE|REMAINING|EXIT_SIGNAL|ATTEMPT_FAILED|>>> )"; then
+        printf '%s\n' "$line" >> "$output_file"
+        [[ -n "$log_file" ]] && printf '%s\n' "$line" >> "$log_file"
       fi
     }
 
     if [[ "$engine" == "codex" ]]; then
+      local -a codex_args=()
+      if [[ -n "$codex_flags" ]]; then
+        # Split on whitespace to avoid eval and command injection.
+        read -r -a codex_args <<< "$codex_flags"
+      fi
       # Codex path: JSONL output via --json, parsed with jq
-      # shellcheck disable=SC2086
       printf '%s' "$prompt_content" \
       | run_with_timeout "$timeout_seconds" \
-          codex exec $codex_flags --json - \
+          codex exec "${codex_args[@]}" --json - \
           2>/dev/null \
       | tee "$raw_jsonl" \
       | jq -r --unbuffered '
