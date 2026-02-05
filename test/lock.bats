@@ -45,19 +45,24 @@ teardown() { _common_teardown; }
   assert_failure
 }
 
-# --- BUG FIX #2 regression test ---
+@test "acquire_lock: does not break active lock with live pid" {
+  local lockdir="${TEST_TMPDIR}/active.lck"
+  mkdir "$lockdir"
+  printf "%s\n" "$$" > "$lockdir/pid"
+  LOCK_MAX_WAIT=1 LOCK_MAX_RETRIES=1 run acquire_lock "$lockdir"
+  assert_failure
+  release_lock "$lockdir"
+}
 
-@test "acquire_lock: breaks stale lock and succeeds" {
+@test "acquire_lock: breaks stale lock with dead pid and succeeds" {
   local lockdir="${TEST_TMPDIR}/stale.lck"
   mkdir "$lockdir"
-  # The stale lock will be broken after max_wait (10s), which is too slow for a test.
-  # Instead we test the mechanism indirectly: create lock, remove it in bg so acquire succeeds
-  ( sleep 0.2; rmdir "$lockdir" ) &
-  local bg_pid=$!
-  acquire_lock "$lockdir"
+  printf "%s\n" "999999" > "$lockdir/pid"
+  LOCK_MAX_WAIT=1 LOCK_MAX_RETRIES=1 run acquire_lock "$lockdir"
+  assert_success
   assert [ -d "$lockdir" ]
+  assert_file_exists "$lockdir/pid"
   release_lock "$lockdir"
-  wait "$bg_pid" 2>/dev/null || true
 }
 
 @test "acquire_lock: multiple sequential acquires work" {
