@@ -143,3 +143,67 @@ teardown() { _common_teardown; }
   result="$(truncate_ellipsis "hello world" 6)"
   assert_equal "${#result}" 6
 }
+
+@test "truncate_ellipsis: ANSI-aware — short colored string passes through" {
+  # With NO_COLOR the vars are empty, so use raw escapes
+  local colored=$'\033[0;31mhi\033[0m'
+  run truncate_ellipsis "$colored" 10
+  assert_output "$colored"
+}
+
+@test "truncate_ellipsis: ANSI-aware — truncates by visual width" {
+  local colored=$'\033[0;31mhello world\033[0m'
+  local result
+  result="$(truncate_ellipsis "$colored" 6)"
+  # Should strip ANSI and truncate to 5 chars + ellipsis = 6 visual chars
+  assert_equal "${#result}" 6
+}
+
+# --- strip_ansi ---
+
+@test "strip_ansi: strips color codes" {
+  local colored=$'\033[0;31mhello\033[0m'
+  run strip_ansi "$colored"
+  assert_output "hello"
+}
+
+@test "strip_ansi: passes plain text through" {
+  run strip_ansi "plain text"
+  assert_output "plain text"
+}
+
+@test "strip_ansi: handles empty string" {
+  run strip_ansi ""
+  assert_output ""
+}
+
+@test "strip_ansi: strips bold + color + dim" {
+  local s=$'\033[1m\033[36mtest\033[0m\033[2m dim\033[0m'
+  run strip_ansi "$s"
+  assert_output "test dim"
+}
+
+# --- visual_length ---
+
+@test "visual_length: plain text" {
+  run visual_length "hello"
+  assert_output "5"
+}
+
+@test "visual_length: empty string" {
+  run visual_length ""
+  assert_output "0"
+}
+
+@test "visual_length: ignores ANSI codes" {
+  local colored=$'\033[0;31mhello\033[0m'
+  run visual_length "$colored"
+  assert_output "5"
+}
+
+@test "visual_length: complex ANSI" {
+  # Visual: "#1 | task | OK" = 14 chars
+  local s=$'\033[1m\033[36m#1\033[0m | \033[1;37mtask\033[0m | \033[0;32mOK\033[0m'
+  run visual_length "$s"
+  assert_output "14"
+}
