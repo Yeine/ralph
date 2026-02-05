@@ -4,6 +4,32 @@
 setup()    { load 'test_helper/common-setup'; _common_setup; }
 teardown() { _common_teardown; }
 
+# --- is_tty ---
+
+@test "is_tty: returns false when stdout is not a tty" {
+  if [[ -t 1 ]]; then
+    skip "stdout is a tty in this environment"
+  fi
+  run is_tty
+  assert_failure
+}
+
+# --- set_title ---
+
+@test "set_title: no output when disabled" {
+  ENABLE_TITLE=false run set_title "hello"
+  assert_success
+  assert_output ""
+}
+
+# --- bell ---
+
+@test "bell: no output for unknown event" {
+  run bell "mystery"
+  assert_success
+  assert_output ""
+}
+
 # --- fmt_hms ---
 
 @test "fmt_hms: formats seconds only" {
@@ -196,6 +222,41 @@ teardown() { _common_teardown; }
 @test "strip_ansi: passes plain text through" {
   run strip_ansi "plain text"
   assert_output "plain text"
+}
+
+# --- check_dependencies ---
+
+@test "check_dependencies: errors when engine missing" {
+  if command -v "definitely-missing-command" >/dev/null 2>&1; then
+    skip "unexpected command exists in PATH"
+  fi
+  ENGINE="definitely-missing-command" run check_dependencies
+  assert_failure 1
+  assert_output --partial "Missing required dependencies"
+}
+
+@test "check_dependencies: succeeds when deps present" {
+  command -v jq >/dev/null 2>&1 || skip "jq not available"
+  command -v sh >/dev/null 2>&1 || skip "sh not available"
+  ENGINE="sh" run check_dependencies
+  assert_success
+}
+
+# --- show_resources ---
+
+@test "show_resources: no output when disabled" {
+  SHOW_RESOURCES=false run show_resources
+  assert_success
+  assert_output ""
+}
+
+# --- usage ---
+
+@test "usage: prints usage text" {
+  run usage
+  assert_success
+  assert_output --partial "Usage: ralph"
+  assert_output --partial "--engine"
 }
 
 @test "strip_ansi: handles empty string" {

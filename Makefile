@@ -1,7 +1,7 @@
 PREFIX ?= /usr/local
 BATS := test/test_helper/bats-core/bin/bats
 
-.PHONY: help install uninstall test lint clean
+.PHONY: help install uninstall test test-verbose lint clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \

@@ -81,6 +81,10 @@ ALLOWED_TOOLS=""
 DISALLOWED_TOOLS=""
 NUM_WORKERS=1
 WORKER_ID=0             # 0 = main process, 1..N = worker subprocess
+UI_MODE="full"
+SHOW_LOGO=true
+SHOW_STATUS_LINE=true
+UI_ASCII=false
 
 # Save original args for caffeinate re-exec
 ORIGINAL_ARGS=("$@")
@@ -107,38 +111,41 @@ _require_arg() { [[ $# -ge 2 ]] || { echo "Error: Option $1 requires an argument
 _validate_path_arg() {
   local label="$1" path="$2"
   if [[ -z "$path" ]]; then
-    log_err "${label} path cannot be empty"
+    log_err "$(sanitize_tty_text "${label} path cannot be empty")"
     exit 1
   fi
   if [[ "$path" == *$'\n'* || "$path" == *$'\r'* ]]; then
-    log_err "${label} path contains newline characters"
+    log_err "$(sanitize_tty_text "${label} path contains newline characters")"
     exit 1
   fi
   if [[ "$path" == -* ]]; then
-    log_err "${label} path cannot start with '-' (use ./<path> to disambiguate)"
+    log_err "$(sanitize_tty_text "${label} path cannot start with '-' (use ./<path> to disambiguate)")"
     exit 1
   fi
 }
 
 _validate_log_file() {
   local path="$1"
+  local path_safe dir_safe
+  path_safe="$(sanitize_tty_text "$path")"
   _validate_path_arg "Log file" "$path"
   if [[ -e "$path" && ! -f "$path" ]]; then
-    log_err "Log path exists but is not a regular file: $path"
+    log_err "Log path exists but is not a regular file: $path_safe"
     exit 1
   fi
   local dir
   dir="$(dirname -- "$path")"
+  dir_safe="$(sanitize_tty_text "$dir")"
   if [[ ! -d "$dir" ]]; then
-    log_err "Log directory does not exist: $dir"
+    log_err "Log directory does not exist: $dir_safe"
     exit 1
   fi
   if [[ ! -w "$dir" ]]; then
-    log_err "Log directory is not writable: $dir"
+    log_err "Log directory is not writable: $dir_safe"
     exit 1
   fi
   if [[ -e "$path" && ! -w "$path" ]]; then
-    log_err "Log file is not writable: $path"
+    log_err "Log file is not writable: $path_safe"
     exit 1
   fi
 }
@@ -162,9 +169,13 @@ while [[ $# -gt 0 ]]; do
     --no-title)     ENABLE_TITLE=false; shift ;;
     --no-resources) SHOW_RESOURCES=false; shift ;;
     --no-wait-countdown) WAIT_COUNTDOWN=false; shift ;;
+    --no-status-line) SHOW_STATUS_LINE=false; shift ;;
+    --no-logo)     SHOW_LOGO=false; shift ;;
+    --ascii)       UI_ASCII=true; shift ;;
     -j|--workers) _require_arg "$@"; NUM_WORKERS="$2"; shift 2 ;;
     --allowed-tools) _require_arg "$@"; ALLOWED_TOOLS="$2"; shift 2 ;;
     --disallowed-tools) _require_arg "$@"; DISALLOWED_TOOLS="$2"; shift 2 ;;
+    --ui) _require_arg "$@"; UI_MODE="$2"; shift 2 ;;
     -l|--log)
       if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
         LOG_FILE="$2"; shift 2
@@ -180,9 +191,12 @@ while [[ $# -gt 0 ]]; do
       init_attempts_file
       show_attempts
       exit 0 ;;
+    help)
+      usage
+      exit 0 ;;
     -h|--help) usage; exit 0 ;;
     *)
-      log_err "Unknown option: $1"
+      log_err "Unknown option: $(sanitize_tty_text "$1")"
       echo ""
       usage
       exit 1 ;;
@@ -193,20 +207,29 @@ done
 # Validate inputs
 # -----------------------------------------------------------------------------
 if [[ "$ENGINE" != "claude" && "$ENGINE" != "codex" ]]; then
-  log_err "Unknown engine: $ENGINE (must be 'claude' or 'codex')"
+  log_err "Unknown engine: $(sanitize_tty_text "$ENGINE") (must be 'claude' or 'codex')"
   exit 1
+fi
+
+if [[ "$UI_MODE" != "full" && "$UI_MODE" != "compact" && "$UI_MODE" != "minimal" ]]; then
+  log_err "Unknown UI mode: $(sanitize_tty_text "$UI_MODE") (must be 'full', 'compact', or 'minimal')"
+  exit 1
+fi
+
+if [[ "$UI_MODE" != "full" ]]; then
+  QUIET=true
 fi
 
 for _numvar_name in MAX_ITERATIONS WAIT_TIME MAX_ATTEMPTS ITERATION_TIMEOUT MAX_TOOL_CALLS NUM_WORKERS; do
   _numvar_val="${!_numvar_name}"
   if ! [[ "$_numvar_val" =~ ^[0-9]+$ ]]; then
-    log_err "${_numvar_name} must be a non-negative integer, got: $_numvar_val"
+    log_err "${_numvar_name} must be a non-negative integer, got: $(sanitize_tty_text "$_numvar_val")"
     exit 1
   fi
 done
 
 if [[ "$NUM_WORKERS" -lt 1 || "$NUM_WORKERS" -gt 16 ]]; then
-  log_err "Workers must be 1-16, got: $NUM_WORKERS"
+  log_err "Workers must be 1-16, got: $(sanitize_tty_text "$NUM_WORKERS")"
   exit 1
 fi
 
@@ -214,6 +237,8 @@ _validate_path_arg "Prompt file" "$PROMPT_FILE"
 if [[ -n "$LOG_FILE" ]]; then
   _validate_log_file "$LOG_FILE"
 fi
+
+setup_ui_charset
 
 # -----------------------------------------------------------------------------
 # Caffeinate: re-exec under caffeinate if requested
@@ -238,7 +263,7 @@ fi
 check_dependencies
 
 if [[ ! -f "$PROMPT_FILE" ]]; then
-  log_err "Prompt file '$PROMPT_FILE' not found"
+  log_err "Prompt file '$(sanitize_tty_text "$PROMPT_FILE")' not found"
   echo ""
   cat <<EOF
 Create a RALPH_TASK.md with your task instructions, for example:
@@ -250,7 +275,7 @@ EOF
   exit 1
 fi
 if [[ ! -r "$PROMPT_FILE" ]]; then
-  log_err "Prompt file '$PROMPT_FILE' is not readable"
+  log_err "Prompt file '$(sanitize_tty_text "$PROMPT_FILE")' is not readable"
   exit 1
 fi
 
@@ -266,8 +291,13 @@ print_header() {
 
   set_title "RALPH LOOP | starting..."
 
-  printf "%b\n" "${BLUE}"
-  cat << "LOGO"
+  if [[ "$UI_MODE" == "minimal" ]]; then
+    return 0
+  fi
+
+  if [[ "$SHOW_LOGO" == "true" ]]; then
+    printf "%b\n" "${BLUE}"
+    cat << "LOGO"
    ██████╗  █████╗ ██╗     ██████╗ ██╗  ██╗
    ██╔══██╗██╔══██╗██║     ██╔══██╗██║  ██║
    ██████╔╝███████║██║     ██████╔╝███████║
@@ -277,8 +307,8 @@ print_header() {
 
         R A L P H   L O O P
 LOGO
-  printf "%b\n" "${NC}"
-
+    printf "%b\n" "${NC}"
+  fi
   hr
   local engine_label
   engine_label="$(printf "%s" "$ENGINE" | tr '[:lower:]' '[:upper:]')"
@@ -293,55 +323,63 @@ print_header
 # -----------------------------------------------------------------------------
 # Config panel
 # -----------------------------------------------------------------------------
-box_title "Config"
+if [[ "$UI_MODE" != "minimal" ]]; then
+  box_title "Config"
 
-max_iter_display="$([[ $MAX_ITERATIONS -eq 0 ]] && echo "unlimited" || echo "${MAX_ITERATIONS}")"
-timeout_display="$(fmt_hms "$ITERATION_TIMEOUT")"
-wait_display="$(fmt_hms "$WAIT_TIME")"
+  max_iter_display="$([[ $MAX_ITERATIONS -eq 0 ]] && echo "unlimited" || echo "${MAX_ITERATIONS}")"
+  timeout_display="$(fmt_hms "$ITERATION_TIMEOUT")"
+  wait_display="$(fmt_hms "$WAIT_TIME")"
 
-skipped_list="$(get_skipped_tasks || true)"
-skipped_count=0
-if [[ -n "$skipped_list" ]]; then
-  skipped_count="$(printf "%s\n" "$skipped_list" | wc -l | tr -d ' ')"
+  skipped_list="$(get_skipped_tasks || true)"
+  skipped_count=0
+  if [[ -n "$skipped_list" ]]; then
+    skipped_count="$(printf "%s\n" "$skipped_list" | wc -l | tr -d ' ')"
+  fi
+
+  engine_display="$(printf "%s" "$ENGINE" | tr '[:lower:]' '[:upper:]')"
+  if [[ "$ENGINE" == "codex" ]]; then
+    engine_display="${engine_display} (flags: $(sanitize_tty_text "$CODEX_EXEC_FLAGS"))"
+  fi
+
+  prompt_safe="$(sanitize_tty_text "$PROMPT_FILE")"
+  log_safe="$(sanitize_tty_text "$LOG_FILE")"
+
+  if [[ "$NUM_WORKERS" -gt 1 ]]; then
+    printf "  %-16s %b\n" "Workers:" "${YELLOW}${NUM_WORKERS} parallel${NC}"
+  else
+    printf "  %-16s %b\n" "Workers:" "${DIM}1 (sequential)${NC}"
+  fi
+  printf "  %-16s %b\n" "Engine:"     "${CYAN}${engine_display}${NC}"
+  printf "  %-16s %b\n" "Prompt:"     "${GREEN}${prompt_safe}${NC}"
+  printf "  %-16s %b\n" "Iterations:" "${YELLOW}${max_iter_display}${NC}"
+  printf "  %-16s %b\n" "Wait:"       "${YELLOW}${wait_display}${NC}"
+  printf "  %-16s %b\n" "Attempts:"   "${YELLOW}${MAX_ATTEMPTS}${NC}"
+  printf "  %-16s %b\n" "Timeout:"    "${YELLOW}${timeout_display}${NC}"
+  printf "  %-16s %b\n" "Max tools:"  "${YELLOW}${MAX_TOOL_CALLS}${NC}"
+  printf "  %-16s %b\n" "UI:"         "${CYAN}${UI_MODE}${NC}"
+  printf "  %-16s %b\n" "Exit on done:"  "$([[ "$EXIT_ON_COMPLETE" == "true" ]] && echo "${GREEN}yes${NC}" || echo "${YELLOW}no (loop forever)${NC}")"
+
+  if [[ -n "$LOG_FILE" ]]; then
+    printf "  %-16s %b\n" "Log:"        "${GREEN}${log_safe}${NC}"
+  else
+    printf "  %-16s %b\n" "Log:"        "${DIM}(disabled)${NC}"
+  fi
+
+  if [[ "$skipped_count" -gt 0 ]]; then
+    printf "  %-16s %b\n" "Skipped:"    "${RED}${skipped_count}${NC} ${DIM}(use --show-attempts)${NC}"
+  else
+    printf "  %-16s %b\n" "Skipped:"    "${GREEN}0${NC}"
+  fi
+
+  echo ""
+  log_dim "Tip: Ctrl+C stops | --quiet for minimal output | --no-title if your terminal hates OSC"
 fi
 
-engine_display="$(printf "%s" "$ENGINE" | tr '[:lower:]' '[:upper:]')"
-if [[ "$ENGINE" == "codex" ]]; then
-  engine_display="${engine_display} (flags: ${CODEX_EXEC_FLAGS})"
-fi
-
-if [[ "$NUM_WORKERS" -gt 1 ]]; then
-  printf "  %-16s %b\n" "Workers:" "${YELLOW}${NUM_WORKERS} parallel${NC}"
-else
-  printf "  %-16s %b\n" "Workers:" "${DIM}1 (sequential)${NC}"
-fi
-printf "  %-16s %b\n" "Engine:"     "${CYAN}${engine_display}${NC}"
-printf "  %-16s %b\n" "Prompt:"     "${GREEN}${PROMPT_FILE}${NC}"
-printf "  %-16s %b\n" "Iterations:" "${YELLOW}${max_iter_display}${NC}"
-printf "  %-16s %b\n" "Wait:"       "${YELLOW}${wait_display}${NC}"
-printf "  %-16s %b\n" "Attempts:"   "${YELLOW}${MAX_ATTEMPTS}${NC}"
-printf "  %-16s %b\n" "Timeout:"    "${YELLOW}${timeout_display}${NC}"
-printf "  %-16s %b\n" "Max tools:"  "${YELLOW}${MAX_TOOL_CALLS}${NC}"
-printf "  %-16s %b\n" "Exit on done:"  "$([[ "$EXIT_ON_COMPLETE" == "true" ]] && echo "${GREEN}yes${NC}" || echo "${YELLOW}no (loop forever)${NC}")"
-
-if [[ -n "$LOG_FILE" ]]; then
-  printf "  %-16s %b\n" "Log:"        "${GREEN}${LOG_FILE}${NC}"
-else
-  printf "  %-16s %b\n" "Log:"        "${DIM}(disabled)${NC}"
-fi
-
-if [[ "$skipped_count" -gt 0 ]]; then
-  printf "  %-16s %b\n" "Skipped:"    "${RED}${skipped_count}${NC} ${DIM}(use --show-attempts)${NC}"
-else
-  printf "  %-16s %b\n" "Skipped:"    "${GREEN}0${NC}"
-fi
-
-echo ""
-log_dim "Tip: Ctrl+C stops | --quiet for minimal output | --no-title if your terminal hates OSC"
-echo ""
-
-if [[ "$QUIET" == "false" ]]; then
-  sleep 1
+if [[ "$UI_MODE" != "minimal" ]]; then
+  echo ""
+  if [[ "$QUIET" == "false" ]]; then
+    sleep 1
+  fi
 fi
 
 # -----------------------------------------------------------------------------

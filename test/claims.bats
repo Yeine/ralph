@@ -39,6 +39,13 @@ teardown() { _common_teardown; }
   assert_equal "$decoded" "$original"
 }
 
+@test "decode_claim_task: returns raw when input is not base64" {
+  local raw="not:base64!!"
+  local decoded
+  decoded="$(decode_claim_task "$raw")"
+  assert_equal "$decoded" "$raw"
+}
+
 # --- update_claim / clear_claim ---
 
 @test "update_claim: writes to claims file" {
@@ -63,11 +70,32 @@ teardown() { _common_teardown; }
   assert_equal "$count" "1"
 }
 
+@test "update_claim: safely stores tasks with pipes and newlines" {
+  local task=$'line1|line2\nline3'
+  update_claim 1 "$task"
+  local count
+  count="$(wc -l < "$CLAIMS_FILE" | tr -d ' ')"
+  assert_equal "$count" "1"
+  local wid ts encoded decoded
+  IFS='|' read -r wid ts encoded < "$CLAIMS_FILE"
+  assert_equal "$wid" "W1"
+  assert [ -n "$encoded" ]
+  [[ "$encoded" != *"|"* ]]
+  decoded="$(decode_claim_task "$encoded")"
+  assert_equal "$decoded" "$task"
+}
+
 @test "update_claim: multiple workers coexist" {
   update_claim 1 "task A"
   update_claim 2 "task B"
   run grep -c "^W" "$CLAIMS_FILE"
   assert_output "2"
+}
+
+@test "clear_claim: no-op when worker has no claim" {
+  run clear_claim 1
+  assert_success
+  assert_file_empty "$CLAIMS_FILE"
 }
 
 # --- get_other_claims ---
@@ -84,6 +112,27 @@ teardown() { _common_teardown; }
   update_claim 1 "task A"
   run get_other_claims 1
   assert_output ""
+}
+
+@test "get_other_claims: normalizes newlines to spaces" {
+  local task=$'line1\nline2'
+  update_claim 2 "$task"
+  run get_other_claims 1
+  assert_output "line1 line2"
+}
+
+@test "get_other_claims: ignores malformed lines" {
+  local now encoded
+  now="$(date +%s)"
+  encoded="$(encode_claim_task "valid task")"
+  cat > "$CLAIMS_FILE" <<EOF
+bogus line
+W2|not_ts|${encoded}
+W3|${now}|
+W4|${now}|${encoded}
+EOF
+  run get_other_claims 1
+  assert_output "valid task"
 }
 
 @test "get_other_claims: skips stale entries" {

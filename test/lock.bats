@@ -45,6 +45,13 @@ teardown() { _common_teardown; }
   assert_failure
 }
 
+@test "acquire_lock: fails when path is a symlink" {
+  local lockpath="${TEST_TMPDIR}/symlink.lck"
+  ln -s "does-not-exist" "$lockpath" || skip "symlinks unsupported"
+  run acquire_lock "$lockpath"
+  assert_failure
+}
+
 @test "acquire_lock: does not break active lock with live pid" {
   local lockdir="${TEST_TMPDIR}/active.lck"
   mkdir "$lockdir"
@@ -62,6 +69,16 @@ teardown() { _common_teardown; }
   assert_success
   assert [ -d "$lockdir" ]
   assert_file_exists "$lockdir/pid"
+  release_lock "$lockdir"
+}
+
+@test "acquire_lock: respects max retries for stale lock" {
+  local lockdir="${TEST_TMPDIR}/stale-retry.lck"
+  mkdir "$lockdir"
+  printf "%s\n" "999999" > "$lockdir/pid"
+  LOCK_MAX_WAIT=0 LOCK_MAX_RETRIES=0 run acquire_lock "$lockdir"
+  assert_failure
+  assert [ -d "$lockdir" ]
   release_lock "$lockdir"
 }
 

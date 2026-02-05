@@ -15,8 +15,10 @@ run_iteration() {
   iter_started_epoch="$(date '+%s')"
   iter_started_ts="$(date '+%Y-%m-%d %H:%M:%S')"
 
-  local iter_quote
-  iter_quote="$(pick_ralph_quote)"
+  local iter_quote=""
+  if [[ "${SHOW_QUOTE_EACH_ITERATION:-true}" == "true" && "${UI_MODE:-full}" != "minimal" ]]; then
+    iter_quote="$(pick_ralph_quote)"
+  fi
 
   # Get current stats
   local skipped_count
@@ -27,13 +29,20 @@ run_iteration() {
 
   set_title "RALPH LOOP | iter ${iteration} | running..."
 
+  local quiet_for_engine="$QUIET"
+  if [[ "${UI_MODE:-full}" != "full" ]]; then
+    quiet_for_engine=true
+  fi
+
   # Print iteration start banner (normal output, no cursor tricks)
-  if [[ "$QUIET" == "false" ]]; then
+  if [[ "${UI_MODE:-full}" == "full" ]]; then
     echo ""
     render_dynamic_banner "$iteration" "$time_short" "$iter_quote" "RUNNING" \
       "$COMPLETED_COUNT" "$FAILED_COUNT" "$skipped_count" \
       0 "$ITERATION_TIMEOUT" 0 "$MAX_TOOL_CALLS" ""
-    show_resources
+    if [[ "$QUIET" == "false" ]]; then
+      show_resources
+    fi
     echo ""
   fi
 
@@ -115,7 +124,7 @@ ${claims_block}
   trap _cleanup_iteration_tmp RETURN
 
   # Background monitor: print inline status line every 5 seconds
-  if [[ "$QUIET" == "false" ]]; then
+  if [[ "$QUIET" == "false" && "${UI_MODE:-full}" == "full" && "${SHOW_STATUS_LINE:-true}" == "true" ]] && is_tty; then
     (
       sleep 5
       while true; do
@@ -138,7 +147,7 @@ ${claims_block}
 
   # Run the AI engine
   run_engine "$prompt_content" "$ENGINE" "$raw_jsonl" "$output_file" \
-    "$pipe_rc_file" "$jq_rc_file" "$ITERATION_TIMEOUT" "$QUIET" \
+    "$pipe_rc_file" "$jq_rc_file" "$ITERATION_TIMEOUT" "$quiet_for_engine" \
     "$CODEX_EXEC_FLAGS" "${LOG_FILE:-}"
 
   # Stop the background monitor
@@ -245,27 +254,34 @@ ${claims_block}
   exit_yes="$([[ "$exit_signal" == "true" ]] && echo "yes" || echo "no")"
   explicit_fail_yes="$([[ -n "$failed_task" ]] && echo "yes" || echo "no")"
 
-  # Print final status banner (inline for non-TTY since scroll region is already reset)
+  # Print final status UI
   local _final_elapsed
   _final_elapsed=$(( iter_end_epoch - iter_started_epoch ))
-  if [[ "$QUIET" == "false" ]]; then
+  if [[ "${UI_MODE:-full}" == "full" ]]; then
     echo ""
     render_dynamic_banner "$iteration" "$time_short" "$iter_quote" "$status" \
       "$COMPLETED_COUNT" "$FAILED_COUNT" "$skipped_count" \
       "$_final_elapsed" "$ITERATION_TIMEOUT" "$tool_count" "$MAX_TOOL_CALLS" "$picked_task"
-  fi
 
-  # Print the result card
-  print_iteration_result_card \
-    "$status" \
-    "$(fmt_hms "$iter_elapsed")" \
-    "$task_display" \
-    "$failure_reason" \
-    "$tool_count" "$MAX_TOOL_CALLS" \
-    "$files_changed" \
-    "$jq_exit_code" "$claude_exit_code" \
-    "$picked_yes" "$done_yes" "$exit_yes" "$explicit_fail_yes" \
-    "$output_file"
+    # Print the result card
+    print_iteration_result_card \
+      "$status" \
+      "$(fmt_hms "$iter_elapsed")" \
+      "$task_display" \
+      "$failure_reason" \
+      "$tool_count" "$MAX_TOOL_CALLS" \
+      "$files_changed" \
+      "$jq_exit_code" "$claude_exit_code" \
+      "$picked_yes" "$done_yes" "$exit_yes" "$explicit_fail_yes" \
+      "$output_file"
+  elif [[ "${UI_MODE:-full}" == "compact" ]]; then
+    print_iteration_summary_line \
+      "$status" \
+      "$(fmt_hms "$iter_elapsed")" \
+      "$task_display" \
+      "$failure_reason" \
+      "$tool_count"
+  fi
 
   # Additional warning if completed but no file changes
   if [[ "$status" == "OK" && "$files_changed" == "false" ]]; then
@@ -298,12 +314,16 @@ ${claims_block}
     fi
   fi
 
+  local picked_safe failed_safe
+  picked_safe="$(sanitize_tty_text "$picked_task")"
+  failed_safe="$(sanitize_tty_text "$failed_task")"
+
   if [[ -n "$failed_task" ]]; then
     local attempt_count
     attempt_count="$(increment_attempts "$failed_task")"
 
     echo ""
-    log_err "ATTEMPT FAILED (explicit): ${failed_task}"
+    log_err "ATTEMPT FAILED (explicit): ${failed_safe}"
     log_err "Attempt ${attempt_count} of ${MAX_ATTEMPTS}"
 
     if [[ "$attempt_count" -ge "$MAX_ATTEMPTS" ]]; then
@@ -318,10 +338,12 @@ ${claims_block}
     local attempt_count reason
     attempt_count="$(increment_attempts "$picked_task")"
     reason="${failure_reason:-not completed}"
+    local reason_safe
+    reason_safe="$(sanitize_tty_text "$reason")"
 
     echo ""
-    log_err "ATTEMPT FAILED: ${picked_task}"
-    log_err "Reason: ${reason}"
+    log_err "ATTEMPT FAILED: ${picked_safe}"
+    log_err "Reason: ${reason_safe}"
     log_err "Attempt ${attempt_count} of ${MAX_ATTEMPTS}"
 
     if [[ "$attempt_count" -ge "$MAX_ATTEMPTS" ]]; then
@@ -334,7 +356,9 @@ ${claims_block}
 
   elif [[ -n "$failure_reason" ]]; then
     echo ""
-    log_err "ITERATION FAILED: ${failure_reason}"
+    local failure_safe
+    failure_safe="$(sanitize_tty_text "$failure_reason")"
+    log_err "ITERATION FAILED: ${failure_safe}"
     [[ -n "${LOG_FILE:-}" ]] && echo "ITERATION FAILED: $failure_reason" >> "$LOG_FILE"
   fi
 

@@ -66,10 +66,20 @@ Options:
   -j, --workers N        Parallel workers, 1-16 (default: 1)
   -c, --caffeinate       Prevent Mac from sleeping
   -l, --log [FILE]       Log output to file
-  -q, --quiet            Reduce output
+  -q, --quiet            Reduce output (keep banners + summaries)
+  --ui MODE              UI mode: full, compact, minimal (compact/minimal imply --quiet)
+  --no-logo              Disable the ASCII logo header
+  --no-status-line       Disable periodic status line updates
+  --ascii                Force ASCII UI (no box-drawing)
+  --no-iter-quote        Don't repeat a quote each iteration
   --bell-on-completion   Bell when iteration completes
   --bell-on-end          Bell when run ends
   --no-exit-on-complete  Keep looping after EXIT_SIGNAL
+  --no-title             Disable terminal title updates
+  --no-resources         Disable docker resources section
+  --no-wait-countdown    Disable animated wait countdown
+  --allowed-tools LIST   Comma-separated allowedTools for claude
+  --disallowed-tools LIST Comma-separated disallowedTools for claude
   --show-attempts        Show attempt tracking state
   --clear-attempts       Reset all attempt tracking
   -h, --help             Show help
@@ -80,6 +90,9 @@ Options:
 ```bash
 # Basic usage
 ralph
+
+# Help
+ralph help
 
 # Run 3 parallel workers
 ralph -j 3
@@ -96,6 +109,17 @@ ralph -w 2 --caffeinate
 # Reset failed task tracking
 ralph --clear-attempts
 ```
+
+## UI Modes
+
+Recommended setups:
+1. Local interactive use: `ralph --ui full`
+2. CI or log-only use: `ralph --ui compact --no-status-line --no-logo`
+3. Minimal/noisy environments: `ralph --ui minimal`
+
+Notes:
+- `compact` and `minimal` imply `--quiet` and suppress the banner.
+- Use `--ascii` to force plain ASCII if your terminal does not support box drawing.
 
 ## Signal Protocol
 

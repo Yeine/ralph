@@ -201,6 +201,7 @@ Ralph Loop - Autonomous Claude Code runner
 Usage: ralph [options]
 
 Options:
+  help                  Show this help
   -p, --prompt FILE      Prompt file to use (default: RALPH_TASK.md)
   -e, --engine ENGINE    AI engine: claude or codex (default: claude)
   --codex-flags FLAGS    Extra flags passed to \`codex exec\` (default: --full-auto)
@@ -215,6 +216,10 @@ Options:
   -c, --caffeinate       Prevent Mac from sleeping
   -l, --log [FILE]       Log output to file (default: ralph_TIMESTAMP.log)
   -q, --quiet            Reduce output (keep banners + summaries)
+  --ui MODE              UI mode: full, compact, minimal (compact/minimal imply --quiet)
+  --no-logo              Disable the ASCII logo header
+  --no-status-line       Disable periodic status line updates
+  --ascii                Force ASCII UI (no box-drawing)
   --no-iter-quote        Don't repeat a quote each iteration
   --bell-on-completion   Bell sound when iteration completes
   --bell-on-end          Bell sound when run ends (exit, max iter, Ctrl+C)

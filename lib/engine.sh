@@ -54,24 +54,26 @@ run_engine() {
     # Helper: display + capture a line of output
     _process_line() {
       local line="$1"
+      local safe_line
+      safe_line="$(sanitize_tty_text "$line")"
       if [[ "$quiet" == "false" ]]; then
         if [[ "$line" == ">>> "* ]]; then
           # Tool-call announcements: compact dim format
-          printf "%b\n" "${DIM}${line}${NC}"
+          printf "%b\n" "${DIM}${safe_line}${NC}"
         elif [[ "$line" == "PICKING:"* ]]; then
-          printf "%b\n" "${BOLD}${ORANGE}${line}${NC}"
+          printf "%b\n" "${BOLD}${ORANGE}${safe_line}${NC}"
         elif [[ "$line" == "DONE:"* || "$line" == "MARKING"* ]]; then
-          printf "%b\n" "${BOLD}${GREEN}${line}${NC}"
+          printf "%b\n" "${BOLD}${GREEN}${safe_line}${NC}"
         elif [[ "$line" == "ATTEMPT_FAILED:"* ]]; then
-          printf "%b\n" "${BOLD}${RED}${line}${NC}"
+          printf "%b\n" "${BOLD}${RED}${safe_line}${NC}"
         elif [[ "$line" == "EXIT_SIGNAL:"* ]]; then
-          printf "%b\n" "${BOLD}${CYAN}${line}${NC}"
+          printf "%b\n" "${BOLD}${CYAN}${safe_line}${NC}"
         fi
       fi
 
       if printf '%s\n' "$line" | grep -qiE "^(PICKING|WRITING|TESTING|PASSED|MARKING|DONE|REMAINING|EXIT_SIGNAL|ATTEMPT_FAILED|>>> )"; then
         printf '%s\n' "$line" >> "$output_file"
-        [[ -n "$log_file" ]] && printf '%s\n' "$line" >> "$log_file"
+        [[ -n "$log_file" ]] && printf '%s\n' "$safe_line" >> "$log_file"
       fi
     }
 

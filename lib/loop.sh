@@ -29,18 +29,24 @@ run_loop() {
       break
     fi
 
-    echo ""
-    log_dim "--- Iteration $iteration complete ---"
-    [[ -n "${LOG_FILE:-}" ]] && echo "--- Iteration $iteration complete ---" >> "$LOG_FILE"
+    if [[ "${UI_MODE:-full}" == "full" ]]; then
+      echo ""
+      log_dim "--- Iteration $iteration complete ---"
+      [[ -n "${LOG_FILE:-}" ]] && echo "--- Iteration $iteration complete ---" >> "$LOG_FILE"
+    fi
 
     iteration=$((iteration + 1))
 
     set_title "RALPH LOOP | idle (waiting)"
-    if [[ "$QUIET" == "true" ]]; then
-      log_info "Waiting $(fmt_hms "$WAIT_TIME")... (Ctrl+C to stop)"
-      sleep "$WAIT_TIME"
+    if [[ "${UI_MODE:-full}" == "full" ]]; then
+      if [[ "$QUIET" == "true" ]]; then
+        log_info "Waiting $(fmt_hms "$WAIT_TIME")... (Ctrl+C to stop)"
+        sleep "$WAIT_TIME"
+      else
+        wait_with_countdown "$WAIT_TIME"
+      fi
     else
-      wait_with_countdown "$WAIT_TIME"
+      sleep "$WAIT_TIME"
     fi
   done
 
@@ -132,24 +138,30 @@ run_parallel() {
   WORKER_PIDS=()
   TAIL_PIDS=()
 
-  echo ""
-  log_info "Spawning ${NUM_WORKERS} parallel workers..."
-  echo ""
+  if [[ "${UI_MODE:-full}" != "minimal" ]]; then
+    echo ""
+    log_info "Spawning ${NUM_WORKERS} parallel workers..."
+    echo ""
+  fi
 
   # Spawn workers with staggered starts
   for i in $(seq 1 "$NUM_WORKERS"); do
     run_worker "$i" "$prompt_file" &
     WORKER_PIDS+=($!)
-    log_ok "Worker W${i} started (PID ${WORKER_PIDS[${#WORKER_PIDS[@]}-1]})"
+    if [[ "${UI_MODE:-full}" != "minimal" ]]; then
+      log_ok "Worker W${i} started (PID ${WORKER_PIDS[${#WORKER_PIDS[@]}-1]})"
+    fi
     # Stagger starts to reduce initial task collision
     if [[ "$i" -lt "$NUM_WORKERS" ]]; then
       sleep 2
     fi
   done
 
-  echo ""
-  log_info "All workers running. Streaming output..."
-  hr
+  if [[ "${UI_MODE:-full}" != "minimal" ]]; then
+    echo ""
+    log_info "All workers running. Streaming output..."
+    hr
+  fi
 
   # Color palette for worker prefixes
   local worker_colors=("$GREEN" "$CYAN" "$YELLOW" "$MAGENTA" "$BLUE" "$ORANGE"
@@ -157,16 +169,18 @@ run_parallel() {
                        "$GREEN" "$CYAN" "$YELLOW" "$MAGENTA")
 
   # Start per-worker tail processes with colored prefixes
-  for i in $(seq 1 "$NUM_WORKERS"); do
-    local color="${worker_colors[$((i - 1))]}"
-    local wlog="${WORKER_STATE_DIR}/w${i}.log"
-    (
-      tail -f "$wlog" 2>/dev/null | while IFS= read -r line; do
-        printf "%b[W%d]%b %s\n" "$color" "$i" "$NC" "$line"
-      done
-    ) &
-    TAIL_PIDS+=($!)
-  done
+  if [[ "${UI_MODE:-full}" != "minimal" ]]; then
+    for i in $(seq 1 "$NUM_WORKERS"); do
+      local color="${worker_colors[$((i - 1))]}"
+      local wlog="${WORKER_STATE_DIR}/w${i}.log"
+      (
+        tail -f "$wlog" 2>/dev/null | while IFS= read -r line; do
+          printf "%b[W%d]%b %s\n" "$color" "$i" "$NC" "$line"
+        done
+      ) &
+      TAIL_PIDS+=($!)
+    done
+  fi
 
   # Wait for all workers to finish
   local all_done=false
@@ -194,8 +208,10 @@ run_parallel() {
   # Brief pause for any final log lines to flush
   sleep 1
 
-  echo ""
-  hr
+  if [[ "${UI_MODE:-full}" != "minimal" ]]; then
+    echo ""
+    hr
+  fi
 
   # Aggregate counters from all workers
   local totals
