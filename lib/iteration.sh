@@ -30,16 +30,19 @@ run_iteration() {
   local time_short
   time_short="$(date '+%H:%M:%S')"
 
-  # Render the initial iteration banner (task unknown, RUNNING state)
-  render_iteration_banner "$iteration" "$time_short" "$run_elapsed_fmt" "$iter_quote" "" \
-    "$COMPLETED_COUNT" "$FAILED_COUNT" "$skipped_count" \
-    0 "$MAX_ATTEMPTS" \
-    0 "$MAX_TOOL_CALLS" \
-    "$ITERATION_TIMEOUT" "$iter_started_epoch" "" "RUNNING"
-
   set_title "RALPH LOOP | iter ${iteration} | running..."
 
-  if [[ "$QUIET" == "false" ]]; then
+  # Dynamic banner: clear screen, render at row 1, set scroll region
+  if is_tty && [[ "$QUIET" == "false" ]]; then
+    init_banner "$iteration" "$time_short" "$iter_quote" "RUNNING" \
+      "$COMPLETED_COUNT" "$FAILED_COUNT" "$skipped_count" \
+      0 "$ITERATION_TIMEOUT" 0 "$MAX_TOOL_CALLS" ""
+    show_resources
+    echo ""
+  elif [[ "$QUIET" == "false" ]]; then
+    # Non-TTY: simple log line
+    echo ""
+    log_info "Iteration ${BOLD}${CYAN}#${iteration}${NC} starting... ${DIM}(${run_elapsed_fmt} elapsed)${NC}"
     show_resources
     echo ""
   fi
@@ -53,14 +56,15 @@ run_iteration() {
   local prompt_content
   prompt_content="$(cat "$prompt_file")"
 
-  local skipped_tasks
+  local skipped_tasks skipped_list
   skipped_tasks="$(get_skipped_tasks || true)"
   if [[ -n "$skipped_tasks" ]]; then
+    skipped_list="$(printf '%s\n' "$skipped_tasks" | sed 's/^/- /')"
     prompt_content="${prompt_content}
 
 ---
 **SKIPPED TASKS (do not attempt these - they have failed ${MAX_ATTEMPTS}+ times):**
-$(echo "$skipped_tasks" | sed 's/^/- /')
+${skipped_list}
 
 If the first unchecked item matches any skipped task, move to the next unchecked item.
 ---"
@@ -70,9 +74,13 @@ If the first unchecked item matches any skipped task, move to the next unchecked
   if [[ "$NUM_WORKERS" -gt 1 && "$WORKER_ID" -gt 0 ]]; then
     local other_claims
     other_claims="$(get_other_claims "$WORKER_ID")"
-    local claims_list=""
+    local claims_list="" claims_block
     if [[ -n "$other_claims" ]]; then
-      claims_list="$(echo "$other_claims" | sed 's/^/- /')"
+      claims_list="$(printf '%s\n' "$other_claims" | sed 's/^/- /')"
+      claims_block="Tasks currently in progress by other workers (DO NOT pick these):
+${claims_list}"
+    else
+      claims_block="(No other workers have active tasks right now)"
     fi
     prompt_content="${prompt_content}
 
@@ -88,12 +96,7 @@ IMPORTANT: Other workers are writing to the same output/state files concurrently
 If you see entries or changes you didn't make, that is NORMAL - another worker wrote them.
 Do NOT ask about it. Just continue with YOUR assigned task and append your own results.
 
-$(if [[ -n "$claims_list" ]]; then
-echo "Tasks currently in progress by other workers (DO NOT pick these):
-${claims_list}"
-else
-echo "(No other workers have active tasks right now)"
-fi)
+${claims_block}
 ---"
   fi
 
@@ -108,17 +111,57 @@ fi)
   echo "0" > "$pipe_rc_file"
   echo "0" > "$jq_rc_file"
 
-  # BUG FIX #10: Clean up temp files when function returns (even on error)
+  # BUG FIX #10: Clean up temp files (and monitor) when function returns
   local _iter_tmp_files=("$output_file" "$raw_jsonl" "$pipe_rc_file" "$jq_rc_file")
+  local _monitor_pid=""
+  # shellcheck disable=SC2329 # invoked by RETURN trap below
   _cleanup_iteration_tmp() {
+    if [[ -n "$_monitor_pid" ]]; then
+      kill "$_monitor_pid" 2>/dev/null || true
+      wait "$_monitor_pid" 2>/dev/null || true
+    fi
+    reset_scroll_region
     rm -f "${_iter_tmp_files[@]}" 2>/dev/null || true
   }
   trap _cleanup_iteration_tmp RETURN
+
+  # Background monitor: update the banner in-place every BANNER_UPDATE_INTERVAL seconds
+  if is_tty && [[ "$QUIET" == "false" ]]; then
+    (
+      sleep "$BANNER_UPDATE_INTERVAL"
+      while true; do
+        local _now _elapsed _tc _pt
+        _now="$(date '+%s')"
+        _elapsed=$(( _now - iter_started_epoch ))
+        if [[ "$ENGINE" == "codex" ]]; then
+          _tc="$(count_tool_calls_from_codex_jsonl "$raw_jsonl" 2>/dev/null || echo 0)"
+        else
+          _tc="$(count_tool_calls_from_jsonl "$raw_jsonl" 2>/dev/null || echo 0)"
+        fi
+        [[ -z "$_tc" ]] && _tc=0
+        _pt="$(grep 'PICKING: ' "$output_file" 2>/dev/null | sed 's/.*PICKING: //' | head -1 || true)"
+        update_banner_inplace \
+          "$iteration" "$time_short" "$iter_quote" "RUNNING" \
+          "$COMPLETED_COUNT" "$FAILED_COUNT" "$skipped_count" \
+          "$_elapsed" "$ITERATION_TIMEOUT" "$_tc" "$MAX_TOOL_CALLS" "$_pt"
+        sleep "$BANNER_UPDATE_INTERVAL"
+      done
+    ) &
+    _monitor_pid=$!
+  fi
 
   # Run the AI engine
   run_engine "$prompt_content" "$ENGINE" "$raw_jsonl" "$output_file" \
     "$pipe_rc_file" "$jq_rc_file" "$ITERATION_TIMEOUT" "$QUIET" \
     "$CODEX_EXEC_FLAGS" "${LOG_FILE:-}"
+
+  # Stop the background monitor and reset scroll region
+  if [[ -n "$_monitor_pid" ]]; then
+    kill "$_monitor_pid" 2>/dev/null || true
+    wait "$_monitor_pid" 2>/dev/null || true
+    _monitor_pid=""
+  fi
+  reset_scroll_region
 
   local claude_exit_code jq_exit_code
   claude_exit_code="$(cat "$pipe_rc_file" 2>/dev/null || echo 0)"
@@ -210,12 +253,6 @@ fi)
     set_title "RALPH LOOP | iter ${iteration} | running"
   fi
 
-  # Calculate attempts for picked task
-  local attempts_now=0
-  if [[ -n "$picked_task" ]]; then
-    attempts_now="$(get_attempts "$picked_task")"
-  fi
-
   # Build signal booleans for the result card
   local picked_yes done_yes exit_yes explicit_fail_yes
   picked_yes="$([[ -n "$picked_task" ]] && echo "yes" || echo "no")"
@@ -223,12 +260,17 @@ fi)
   exit_yes="$([[ "$exit_signal" == "true" ]] && echo "yes" || echo "no")"
   explicit_fail_yes="$([[ -n "$failed_task" ]] && echo "yes" || echo "no")"
 
-  # Re-render banner with final state
-  render_iteration_banner "$iteration" "$time_short" "$run_elapsed_fmt" "$iter_quote" "$picked_task" \
-    "$COMPLETED_COUNT" "$FAILED_COUNT" "$skipped_count" \
-    "$attempts_now" "$MAX_ATTEMPTS" \
-    "$tool_count" "$MAX_TOOL_CALLS" \
-    "$ITERATION_TIMEOUT" "$iter_started_epoch" "$files_changed" "$status"
+  # Update the fixed banner in-place with final status (TTY) or log a summary (non-TTY)
+  local _final_elapsed
+  _final_elapsed=$(( iter_end_epoch - iter_started_epoch ))
+  if is_tty && [[ "$QUIET" == "false" ]]; then
+    update_banner_inplace \
+      "$iteration" "$time_short" "$iter_quote" "$status" \
+      "$COMPLETED_COUNT" "$FAILED_COUNT" "$skipped_count" \
+      "$_final_elapsed" "$ITERATION_TIMEOUT" "$tool_count" "$MAX_TOOL_CALLS" "$picked_task"
+  elif [[ "$QUIET" == "false" ]]; then
+    log_info "Iteration #${iteration} ${status} — ${_final_elapsed}s elapsed, ${tool_count} tools, task: ${picked_task:-(none)}"
+  fi
 
   # Print the result card
   print_iteration_result_card \

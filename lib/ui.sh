@@ -66,7 +66,23 @@ box_bottom() {
 
 box_line() {
   local content="$1"
-  printf "%b│%b %b %b│%b\n" "${DIM}${BLUE}" "${NC}" "$content" "${DIM}${BLUE}" "${NC}"
+  local width content_width
+  width="$(get_box_width)"
+  content_width=$(( width - 4 ))  # 2 borders + 2 spaces
+
+  local vlen
+  vlen="$(visual_length "$content")"
+  if [[ "$vlen" -gt "$content_width" ]]; then
+    # Truncate: strip ANSI, cut to fit, add ellipsis
+    local plain
+    plain="$(strip_ansi "$content")"
+    content="${plain:0:$((content_width - 1))}…"
+    vlen="$content_width"
+  fi
+
+  # Pad with spaces so the right border aligns
+  local pad=$(( content_width - vlen ))
+  printf "%b│%b %b%*s %b│%b\n" "${DIM}${BLUE}" "${NC}" "$content" "$pad" "" "${DIM}${BLUE}" "${NC}"
 }
 
 box_title() {
@@ -78,14 +94,16 @@ box_title() {
 # String helpers
 # -----------------------------------------------------------------------------
 
-# Safe string truncation with ellipsis
+# Safe string truncation with ellipsis (ANSI-aware)
 truncate_ellipsis() {
   local s="$1" max="$2"
   if [[ -z "$s" || "$max" -le 0 ]]; then
     echo ""
     return 0
   fi
-  if [[ "${#s}" -le "$max" ]]; then
+  local vlen
+  vlen="$(visual_length "$s")"
+  if [[ "$vlen" -le "$max" ]]; then
     echo "$s"
     return 0
   fi
@@ -93,7 +111,10 @@ truncate_ellipsis() {
     echo "…"
     return 0
   fi
-  echo "${s:0:$((max-1))}…"
+  # Strip ANSI before truncating to avoid cutting mid-sequence
+  local plain
+  plain="$(strip_ansi "$s")"
+  echo "${plain:0:$((max-1))}…"
 }
 
 # Right align inside a given width
@@ -104,6 +125,33 @@ right_align() {
     echo "$s"
   else
     printf "%*s%s" $((width - len)) "" "$s"
+  fi
+}
+
+# Strip ANSI escape sequences from a string (pipe helper)
+strip_ansi() {
+  local s="$1"
+  # Remove all CSI sequences: ESC[ ... m (colors, bold, dim, etc.)
+  printf '%s' "$s" | sed $'s/\033\[[0-9;]*m//g'
+}
+
+# Return the visual column width of a string (ANSI codes excluded)
+visual_length() {
+  local stripped
+  stripped="$(strip_ansi "$1")"
+  echo "${#stripped}"
+}
+
+# Pad a string with trailing spaces to reach a target visual width.
+# If the string is already wider, it is returned as-is.
+pad_to_width() {
+  local s="$1" target_width="$2"
+  local vlen
+  vlen="$(visual_length "$s")"
+  if [[ "$vlen" -ge "$target_width" ]]; then
+    printf '%b' "$s"
+  else
+    printf '%b%*s' "$s" $(( target_width - vlen )) ""
   fi
 }
 
@@ -144,100 +192,129 @@ wait_with_countdown() {
 }
 
 # -----------------------------------------------------------------------------
-# Iteration banner (2-line, compact)
+# Dynamic banner — fixed at top of scroll region, updated in-place
+# Always renders exactly 5 lines: box_top + line1 + line2 + quote + box_bottom
 # -----------------------------------------------------------------------------
-render_iteration_banner() {
+
+# Banner height is constant so scroll region stays stable (used in iteration.sh)
+# shellcheck disable=SC2034
+BANNER_LINES=5
+
+# Banner state flag — set by init_banner, cleared by reset_scroll_region.
+_BANNER_ACTIVE=0
+
+# Banner update interval in seconds (used by the monitor loop in iteration.sh).
+# shellcheck disable=SC2034
+BANNER_UPDATE_INTERVAL=2
+
+# Set terminal scroll region so lines below the banner scroll independently.
+_setup_scroll_region() {
+  is_tty || return 0
+  local term_rows
+  term_rows="$(tput lines 2>/dev/null || echo 24)"
+  local banner_end=$(( BANNER_LINES + 1 ))
+  printf '\033[%d;%dr' "$banner_end" "$term_rows"   # set scroll region
+  printf '\033[%d;1H' "$banner_end"                  # move cursor there
+}
+
+# Reset scroll region to full terminal.
+reset_scroll_region() {
+  is_tty || return 0
+  _BANNER_ACTIVE=0
+  printf '\033[r'           # reset to full terminal
+}
+
+# Reapply scroll region after terminal resize (SIGWINCH).
+# No-op when no banner is active.
+reapply_scroll_region() {
+  [[ "$_BANNER_ACTIVE" -eq 1 ]] || return 0
+  _setup_scroll_region
+}
+
+# Initialize the dynamic banner: clear screen, render at row 1, set scroll region.
+# Call this once at iteration start (TTY + non-quiet only).
+init_banner() {
+  is_tty || return 0
+  _BANNER_ACTIVE=1
+  printf '\033[2J\033[H'    # clear screen, cursor to row 1 col 1
+  render_dynamic_banner "$@"
+  _setup_scroll_region
+}
+
+# Render the dynamic banner (exactly BANNER_LINES lines).
+# Used for both initial render and in-place updates.
+render_dynamic_banner() {
   local iteration="$1"
   local time_short="$2"
-  local run_elapsed_fmt="$3"
-  local quote="$4"
-  local picked_task="$5"
-  local completed="$6" failed="$7" skipped="$8"
-  local attempts_now="$9" max_attempts="${10}"
-  local tool_count="${11}" max_tools="${12}"
-  local iter_timeout="${13}"
-  local iter_started_epoch="${14}"
-  local files_changed="${15:-}"
-  local state_label="${16:-RUNNING}"
-
-  local width
-  width="$(get_box_width)"
-
-  # Build meters
-  local now elapsed_sec elapsed_pct tools_pct tools_color time_color
-  now="$(date '+%s')"
-  elapsed_sec=$(( now - iter_started_epoch ))
-  if [[ "$iter_timeout" -gt 0 ]]; then
-    elapsed_pct=$(( (elapsed_sec * 100) / iter_timeout ))
-    [[ "$elapsed_pct" -gt 999 ]] && elapsed_pct=999
-  else
-    elapsed_pct=0
-  fi
-
-  if [[ "$max_tools" -gt 0 ]]; then
-    tools_pct=$(( (tool_count * 100) / max_tools ))
-    [[ "$tools_pct" -gt 999 ]] && tools_pct=999
-  else
-    tools_pct=0
-  fi
-
-  tools_color="$(color_by_pct "$tools_pct" 60 85)"
-  time_color="$(color_by_pct "$elapsed_pct" 60 85)"
-
-  # Task slot
-  local task_slot=""
-  if [[ -n "$picked_task" ]]; then
-    task_slot="$(truncate_ellipsis "$picked_task" 48)"
-  fi
-
-  # Attempts slot (only show when task has prior attempts)
-  local attempts_slot=""
-  if [[ -n "$picked_task" && "$attempts_now" -ge 1 ]]; then
-    attempts_slot=" | tries ${attempts_now}/${max_attempts}"
-  fi
-
-  # Git hint
-  local git_slot=""
-  if [[ -n "$files_changed" ]]; then
-    if [[ "$files_changed" == "true" ]]; then
-      git_slot=" | dirty"
-    else
-      git_slot=" | clean"
-    fi
-  fi
+  local quote="$3"
+  local state_label="$4"
+  local completed="$5" failed="$6" skipped="$7"
+  local elapsed_sec="$8" iter_timeout="$9"
+  local tool_count="${10}" max_tools="${11}"
+  local picked_task="${12:-}"
 
   # State badge color
   local badge_color="$BLUE"
   case "$state_label" in
     OK|COMPLETED|SUCCESS) badge_color="$GREEN" ;;
-    FAIL|FAILED|ERROR|TIMEOUT|PARSE_FAIL|CLAUDE_FAIL) badge_color="$RED" ;;
+    FAIL|FAILED|ERROR|TIMEOUT) badge_color="$RED" ;;
     EMPTY|WARN) badge_color="$YELLOW" ;;
-    RUNNING|IDLE) badge_color="$BLUE" ;;
   esac
 
-  # Line 1: Iter + Task (if known) + State
+  # Task slot
+  local task_slot=""
+  if [[ -n "$picked_task" ]]; then
+    task_slot="$(truncate_ellipsis "$picked_task" 40)"
+  fi
+
+  # Line 1: Iter + Task + State
   local line1
   if [[ -n "$task_slot" ]]; then
-    line1="${BOLD}${CYAN}#${iteration}${NC} ${DIM}|${NC} ${WHITE}${task_slot}${NC}${DIM}${attempts_slot}${NC} ${DIM}|${NC} ${BOLD}${badge_color}${state_label}${NC}"
+    line1="${BOLD}${CYAN}#${iteration}${NC} ${DIM}|${NC} ${WHITE}${task_slot}${NC} ${DIM}|${NC} ${BOLD}${badge_color}${state_label}${NC}"
   else
     line1="${BOLD}${CYAN}#${iteration}${NC} ${DIM}|${NC} ${BOLD}${badge_color}${state_label}${NC}"
   fi
 
-  # Line 2: Time + elapsed + counts + meters + mode hints
-  local line2
-  line2="${DIM}${time_short}${NC}  ${DIM}|${NC}  ${DIM}T${NC} ${CYAN}${run_elapsed_fmt}${NC}  ${DIM}|${NC}  ${GREEN}v${completed}${NC} ${RED}x${failed}${NC} ${YELLOW}>${skipped}${NC}  ${DIM}|${NC}  ${time_color}T ${elapsed_sec}s/${iter_timeout}s${NC}  ${DIM}|${NC}  ${tools_color}# ${tool_count}/${max_tools}${NC}${DIM}${git_slot}${NC}"
+  # Meters
+  local elapsed_pct=0 tools_pct=0 time_color tools_color
+  if [[ "$iter_timeout" -gt 0 ]]; then
+    elapsed_pct=$(( (elapsed_sec * 100) / iter_timeout ))
+    [[ "$elapsed_pct" -gt 999 ]] && elapsed_pct=999
+  fi
+  if [[ "$max_tools" -gt 0 ]]; then
+    tools_pct=$(( (tool_count * 100) / max_tools ))
+    [[ "$tools_pct" -gt 999 ]] && tools_pct=999
+  fi
+  time_color="$(color_by_pct "$elapsed_pct" 60 85)"
+  tools_color="$(color_by_pct "$tools_pct" 60 85)"
 
-  echo ""
+  # Line 2: Time + counts + meters
+  local line2
+  line2="${DIM}${time_short}${NC}  ${DIM}|${NC}  ${GREEN}v${completed}${NC} ${RED}x${failed}${NC} ${YELLOW}>${skipped}${NC}  ${DIM}|${NC}  ${time_color}T ${elapsed_sec}s/${iter_timeout}s${NC}  ${DIM}|${NC}  ${tools_color}# ${tool_count}/${max_tools}${NC}"
+
+  # Quote line (always present for fixed height)
+  local line3="${DIM}${MAGENTA}\"${quote}\"${NC}"
+
   box_top
   box_line "$line1"
   box_line "$line2"
-
-  # Quote
-  if [[ "${SHOW_QUOTE_EACH_ITERATION:-true}" == "true" && -n "$quote" ]]; then
-    box_line "${DIM}${MAGENTA}\"${quote}\"${NC}"
-  fi
+  box_line "$line3"
   box_bottom
 }
+
+# Redraw the banner in-place without disturbing the scroll region.
+# Moves to row 1, redraws, then repositions cursor at the bottom of the
+# scroll region.  We intentionally avoid \033[s / \033[u (save/restore cursor)
+# because the background monitor races with foreground output, causing the
+# cursor to jump back to a stale position.  Moving to the bottom is safe:
+# the scroll region auto-scrolls so new output always appears at the bottom.
+update_banner_inplace() {
+  is_tty || return 0
+  printf '\033[1;1H'         # move to row 1, col 1
+  render_dynamic_banner "$@"
+  printf '\033[999;1H'       # move to bottom of scroll region
+}
+
 
 # -----------------------------------------------------------------------------
 # End-of-iteration result card
@@ -258,47 +335,38 @@ print_iteration_result_card() {
   local explicit_fail_yes="${13}"
   local output_file="${14}"
 
-  local status_icon status_color
-  case "$status" in
-    OK)    status_icon="OK"; status_color="$GREEN" ;;
-    FAIL)  status_icon="FAIL"; status_color="$RED" ;;
-    EMPTY) status_icon="WARN"; status_color="$YELLOW" ;;
-    *)     status_icon="INFO"; status_color="$BLUE" ;;
-  esac
-
-  local tools_pct tools_color
-  if [[ "$max_tools" -gt 0 ]]; then
-    tools_pct=$(( (tool_count * 100) / max_tools ))
-  else
-    tools_pct=0
-  fi
-  tools_color="$(color_by_pct "$tools_pct" 60 85)"
-
   echo ""
   hr
-  printf "%b\n" "${BOLD}${status_color}${status_icon} Iteration Result${NC}"
-  printf "  %-12s %b\n" "Outcome:"   "${BOLD}${status_color}${status}${NC}  ${DIM}|${NC} ${CYAN}${iter_elapsed_fmt}${NC}"
-  printf "  %-12s %b\n" "Task:"      "${WHITE}${task_display}${NC}"
 
-  if [[ -n "$failure_reason" ]]; then
-    printf "  %-12s %b\n" "Reason:" "${RED}${failure_reason}${NC}"
-  fi
+  # One-line summary (the key takeaway)
+  case "$status" in
+    OK)
+      printf "  %b\n" "${GREEN}v${NC}  Completed ${WHITE}${task_display}${NC} in ${CYAN}${iter_elapsed_fmt}${NC} ${DIM}(${tool_count} tool calls)${NC}"
+      ;;
+    FAIL)
+      printf "  %b\n" "${RED}x${NC}  Failed ${WHITE}${task_display}${NC} after ${CYAN}${iter_elapsed_fmt}${NC}: ${RED}${failure_reason}${NC}"
+      ;;
+    EMPTY)
+      printf "  %b\n" "${YELLOW}!${NC}  Empty iteration ${DIM}(no tools, no changes, no task picked)${NC}"
+      ;;
+    *)
+      printf "  %b\n" "${BLUE}i${NC}  Iteration finished in ${CYAN}${iter_elapsed_fmt}${NC}"
+      ;;
+  esac
 
-  printf "  %-12s %b\n" "Metrics:" "tools=${tools_color}${tool_count}/${max_tools}${NC}  ${DIM}|${NC} files_changed=${CYAN}${files_changed}${NC}  ${DIM}|${NC} jq=${CYAN}${jq_exit}${NC}  ${DIM}|${NC} claude=${CYAN}${claude_exit}${NC}"
-  printf "  %-12s %b\n" "Signals:" "picked=${CYAN}${picked_yes}${NC} done=${CYAN}${done_yes}${NC} exit=${CYAN}${exit_yes}${NC} attempt_failed=${CYAN}${explicit_fail_yes}${NC}"
+  # Detailed metrics (dimmed — for debugging, not primary reading)
+  printf "  %b\n" "${DIM}tools=${tool_count}/${max_tools}  files_changed=${files_changed}  jq=${jq_exit}  claude=${claude_exit}${NC}"
+  printf "  %b\n" "${DIM}picked=${picked_yes} done=${done_yes} exit=${exit_yes} attempt_failed=${explicit_fail_yes}${NC}"
 
-  if [[ "$status" == "FAIL" || "$status" == "EMPTY" ]]; then
+  # Signal trail (show for all statuses so user can see what happened)
+  local lines
+  lines="$(tail_signal_lines "$output_file" 6)"
+  if [[ -n "$lines" ]]; then
     echo ""
-    printf "%b\n" "${BOLD}${MAGENTA}Last signals${NC}"
-    local lines
-    lines="$(tail_signal_lines "$output_file" 6)"
-    if [[ -n "$lines" ]]; then
-      while IFS= read -r l; do
-        printf "  %b\n" "${DIM}${l}${NC}"
-      done <<< "$lines"
-    else
-      printf "  %b\n" "${DIM}(no signal lines captured)${NC}"
-    fi
+    printf "  %b\n" "${DIM}Signals:${NC}"
+    while IFS= read -r l; do
+      printf "    %b\n" "${DIM}${l}${NC}"
+    done <<< "$lines"
   fi
   hr
 }
