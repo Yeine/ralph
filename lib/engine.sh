@@ -68,6 +68,8 @@ run_engine() {
           printf "%b\n" "${BOLD}${ORANGE}${safe_line}${NC}"
         elif [[ "$line" == "DONE:"* || "$line" == "MARKING"* ]]; then
           printf "%b\n" "${BOLD}${GREEN}${safe_line}${NC}"
+        elif [[ "$line" == "REMAINING:"* ]]; then
+          printf "%b\n" "${DIM}${safe_line}${NC}"
         elif [[ "$line" == "ATTEMPT_FAILED:"* ]]; then
           printf "%b\n" "${BOLD}${RED}${safe_line}${NC}"
         elif [[ "$line" == "EXIT_SIGNAL:"* ]]; then
@@ -76,6 +78,11 @@ run_engine() {
       fi
 
       if printf '%s\n' "$line" | grep -qiE "^(PICKING|WRITING|TESTING|PASSED|MARKING|DONE|REMAINING|EXIT_SIGNAL|ATTEMPT_FAILED|>>> )"; then
+        # Deduplicate: skip signals we've already recorded (e.g. agent emits DONE: twice)
+        # Tool calls (">>> ") are exempt — duplicates are expected there.
+        if [[ "$line" != ">>> "* ]] && grep -qFx "$line" "$output_file" 2>/dev/null; then
+          return
+        fi
         printf '%s\n' "$line" >> "$output_file"
         [[ -n "$log_file" ]] && printf '%s\n' "$safe_line" >> "$log_file"
       fi

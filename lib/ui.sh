@@ -506,6 +506,26 @@ tail_signal_lines() {
     | tail -n "$n" || true
 }
 
+# Apply consistent color formatting to a signal line (for Signals sections)
+colorize_signal_line() {
+  local line="$1"
+  if [[ "$line" == ">>> "* ]]; then
+    printf '%b' "${DIM}${line}${NC}"
+  elif [[ "$line" == "PICKING:"* ]]; then
+    printf '%b' "${BOLD}${ORANGE}${line}${NC}"
+  elif [[ "$line" == "DONE:"* || "$line" == "MARKING"* ]]; then
+    printf '%b' "${BOLD}${GREEN}${line}${NC}"
+  elif [[ "$line" == "REMAINING:"* ]]; then
+    printf '%b' "${DIM}${line}${NC}"
+  elif [[ "$line" == "ATTEMPT_FAILED:"* ]]; then
+    printf '%b' "${BOLD}${RED}${line}${NC}"
+  elif [[ "$line" == "EXIT_SIGNAL:"* ]]; then
+    printf '%b' "${BOLD}${CYAN}${line}${NC}"
+  else
+    printf '%b' "${DIM}${line}${NC}"
+  fi
+}
+
 # -----------------------------------------------------------------------------
 # Animated wait countdown with keyboard shortcuts (TTY only)
 # -----------------------------------------------------------------------------
@@ -718,7 +738,7 @@ print_error_context_box() {
       while IFS= read -r l; do
         local line_safe
         line_safe="$(sanitize_tty_text "$l")"
-        box_line "  ${DIM}${line_safe}${NC}"
+        box_line "  $(colorize_signal_line "$line_safe")"
       done <<< "$lines"
     fi
   fi
@@ -791,7 +811,7 @@ print_iteration_result_card() {
     local line_safe
     while IFS= read -r l; do
       line_safe="$(sanitize_tty_text "$l")"
-      printf "    %b\n" "${DIM}${line_safe}${NC}"
+      printf "    %b\n" "$(colorize_signal_line "$line_safe")"
     done <<< "$lines"
   fi
   hr
@@ -1191,7 +1211,7 @@ render_dashboard() {
         while IFS= read -r l; do
           local ls
           ls="$(sanitize_tty_text "$l")"
-          box_line "  ${DIM}$(truncate_ellipsis "$ls" 45)${NC}"
+          box_line "  $(colorize_signal_line "$(truncate_ellipsis "$ls" 45)")"
         done <<< "$recent"
       fi
     fi
