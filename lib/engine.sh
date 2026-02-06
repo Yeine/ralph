@@ -58,7 +58,9 @@ run_engine() {
       safe_line="$(sanitize_tty_text "$line")"
       if [[ "$quiet" == "false" ]]; then
         # Clear any in-place status line before printing engine output
-        clear_status_line
+        # Skip when stdout is not a TTY (e.g. worker log files) to avoid
+        # \r\033[K overwriting the [Wn] prefix added by tail
+        is_tty && clear_status_line
         if [[ "$line" == ">>> "* ]]; then
           # Tool-call announcements: compact dim format
           printf "%b\n" "${DIM}${safe_line}${NC}"
