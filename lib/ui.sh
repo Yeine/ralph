@@ -7,10 +7,10 @@
 # Logging
 # -----------------------------------------------------------------------------
 log_info() { printf "%b\n" "${BLUE}i${NC}  $*"; }
-log_ok()   { printf "%b\n" "${GREEN}v${NC}  $*"; }
+log_ok() { printf "%b\n" "${GREEN}v${NC}  $*"; }
 log_warn() { printf "%b\n" "${YELLOW}!${NC}  $*"; }
-log_err()  { printf "%b\n" "${RED}x${NC}  $*"; }
-log_dim()  { printf "%b\n" "${DIM}$*${NC}"; }
+log_err() { printf "%b\n" "${RED}x${NC}  $*"; }
+log_dim() { printf "%b\n" "${DIM}$*${NC}"; }
 
 # -----------------------------------------------------------------------------
 # UI sizing constants
@@ -41,7 +41,8 @@ UI_SYM_SKIP="⊘"
 
 # Spinner frames
 SPINNER_FRAMES_UNICODE=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
-SPINNER_FRAMES_ASCII=("|" "/" "-" "\\")
+# shellcheck disable=SC1003
+SPINNER_FRAMES_ASCII=("|" "/" "-" '\')
 SPINNER_TICK=0
 
 # Progress bar characters
@@ -67,27 +68,27 @@ HISTORY_INFO_ASCII="."
 setup_ui_charset() {
   local ascii="false"
   case "${UI_ASCII:-}" in
-    1|true|TRUE|yes|YES) ascii="true" ;;
+    1 | true | TRUE | yes | YES) ascii="true" ;;
   esac
   case "${RALPH_ASCII:-}" in
-    1|true|TRUE|yes|YES) ascii="true" ;;
+    1 | true | TRUE | yes | YES) ascii="true" ;;
   esac
-  if [[ "$ascii" != "true" ]]; then
+  if [[ $ascii != "true" ]]; then
     if ! is_tty; then
       ascii="true"
     else
       local loc="${LC_ALL:-${LANG:-}}"
-      if [[ -n "$loc" ]]; then
-        if [[ "$loc" == "C" || "$loc" == "POSIX" ]]; then
+      if [[ -n $loc ]]; then
+        if [[ $loc == "C" || $loc == "POSIX" ]]; then
           ascii="true"
-        elif [[ "$loc" != *"UTF-8"* && "$loc" != *"utf8"* && "$loc" != *"UTF8"* ]]; then
+        elif [[ $loc != *"UTF-8"* && $loc != *"utf8"* && $loc != *"UTF8"* ]]; then
           ascii="true"
         fi
       fi
     fi
   fi
 
-  if [[ "$ascii" == "true" ]]; then
+  if [[ $ascii == "true" ]]; then
     UI_USE_ASCII=true
     UI_HR_CHAR="-"
     UI_BOX_H="-"
@@ -129,9 +130,9 @@ _get_terminal_width() {
   if command -v tput >/dev/null 2>&1 && is_tty; then
     local cols
     cols="$(tput cols 2>/dev/null || echo 0)"
-    if [[ "$cols" -gt 0 ]]; then
-      width=$(( cols < max ? cols : max ))
-      width=$(( width > min ? width : min ))
+    if [[ $cols -gt 0 ]]; then
+      width=$((cols < max ? cols : max))
+      width=$((width > min ? width : min))
     fi
   fi
   echo "$width"
@@ -147,7 +148,7 @@ _hr_colored() {
   printf "%b\n" "${color}$(printf "%*s" "$width" "" | tr ' ' "$ch")${NC}"
 }
 
-hr()       { _hr_colored "$BLUE"; }
+hr() { _hr_colored "$BLUE"; }
 hr_green() { _hr_colored "$GREEN"; }
 
 # -----------------------------------------------------------------------------
@@ -157,8 +158,8 @@ get_box_width() {
   local width
   width="$(_get_terminal_width "$BOX_TERM_MIN_WIDTH" "$BOX_TERM_MAX_WIDTH")"
   # Box is 2 chars narrower
-  width=$(( width - 2 ))
-  width=$(( width > BOX_MIN_WIDTH ? width : BOX_MIN_WIDTH ))
+  width=$((width - 2))
+  width=$((width > BOX_MIN_WIDTH ? width : BOX_MIN_WIDTH))
   echo "$width"
 }
 
@@ -178,17 +179,17 @@ box_line() {
   local content="$1"
   local width content_width
   width="$(get_box_width)"
-  content_width=$(( width - 4 ))  # 2 borders + 2 spaces
+  content_width=$((width - 4)) # 2 borders + 2 spaces
 
   local vlen
   vlen="$(visual_length "$content")"
-  if [[ "$vlen" -gt "$content_width" ]]; then
+  if [[ $vlen -gt $content_width ]]; then
     content="$(truncate_ellipsis "$content" "$content_width")"
     vlen="$(visual_length "$content")"
   fi
 
   # Pad with spaces so the right border aligns
-  local pad=$(( content_width - vlen ))
+  local pad=$((content_width - vlen))
   printf "%b%s%b %b%*s %b%s%b\n" "${DIM}${BLUE}" "$UI_BOX_V" "${NC}" "$content" "$pad" "" "${DIM}${BLUE}" "$UI_BOX_V" "${NC}"
 }
 
@@ -221,33 +222,33 @@ sanitize_tty_text() {
 # Safe string truncation with ellipsis (ANSI-aware)
 truncate_ellipsis() {
   local s="$1" max="$2"
-  if [[ -z "$s" || "$max" -le 0 ]]; then
+  if [[ -z $s || $max -le 0 ]]; then
     echo ""
     return 0
   fi
   local vlen
   vlen="$(visual_length "$s")"
-  if [[ "$vlen" -le "$max" ]]; then
+  if [[ $vlen -le $max ]]; then
     echo "$s"
     return 0
   fi
   local ell="${UI_ELLIPSIS}"
   local ell_len="${#ell}"
-  if [[ "$max" -le "$ell_len" ]]; then
-    echo "${ell:0:$max}"
+  if [[ $max -le $ell_len ]]; then
+    echo "${ell:0:max}"
     return 0
   fi
   # Strip ANSI before truncating to avoid cutting mid-sequence
   local plain
   plain="$(strip_ansi "$s")"
-  echo "${plain:0:$((max-ell_len))}${ell}"
+  echo "${plain:0:$((max - ell_len))}${ell}"
 }
 
 # Right align inside a given width
 right_align() {
   local s="$1" width="$2"
   local len="${#s}"
-  if [[ "$len" -ge "$width" ]]; then
+  if [[ $len -ge $width ]]; then
     echo "$s"
   else
     printf "%*s%s" $((width - len)) "" "$s"
@@ -273,19 +274,19 @@ pad_to_width() {
   local s="$1" target_width="$2"
   local vlen
   vlen="$(visual_length "$s")"
-  if [[ "$vlen" -ge "$target_width" ]]; then
+  if [[ $vlen -ge $target_width ]]; then
     printf '%b' "$s"
   else
-    printf '%b%*s' "$s" $(( target_width - vlen )) ""
+    printf '%b%*s' "$s" $((target_width - vlen)) ""
   fi
 }
 
 # Color helper based on percentage thresholds (high = bad, e.g. time/tools)
 color_by_pct() {
   local pct="$1" good="$2" warn="$3"
-  if [[ "$pct" -lt "$good" ]]; then
+  if [[ $pct -lt $good ]]; then
     printf "%b" "${GREEN}"
-  elif [[ "$pct" -lt "$warn" ]]; then
+  elif [[ $pct -lt $warn ]]; then
     printf "%b" "${YELLOW}"
   else
     printf "%b" "${RED}"
@@ -295,9 +296,9 @@ color_by_pct() {
 # Inverted color helper (high = good, e.g. health percentage)
 color_by_pct_inverted() {
   local pct="$1"
-  if [[ "$pct" -ge 80 ]]; then
+  if [[ $pct -ge 80 ]]; then
     printf "%b" "${GREEN}"
-  elif [[ "$pct" -ge 50 ]]; then
+  elif [[ $pct -ge 50 ]]; then
     printf "%b" "${YELLOW}"
   else
     printf "%b" "${RED}"
@@ -312,11 +313,11 @@ fmt_thousands() {
     return
   fi
   local result="" count=0 i
-  for (( i=${#n}-1; i>=0; i-- )); do
-    if [[ "$count" -gt 0 && $(( count % 3 )) -eq 0 ]]; then
+  for ((i = ${#n} - 1; i >= 0; i--)); do
+    if [[ $count -gt 0 && $((count % 3)) -eq 0 ]]; then
       result=",${result}"
     fi
-    result="${n:$i:1}${result}"
+    result="${n:i:1}${result}"
     count=$((count + 1))
   done
   printf '%s' "$result"
@@ -327,15 +328,15 @@ fmt_relative_time() {
   local epoch="$1"
   local now
   now="$(date '+%s')"
-  local diff=$(( now - epoch ))
-  if [[ "$diff" -lt 60 ]]; then
+  local diff=$((now - epoch))
+  if [[ $diff -lt 60 ]]; then
     printf '%ds ago' "$diff"
-  elif [[ "$diff" -lt 3600 ]]; then
-    printf '%dm ago' $(( diff / 60 ))
-  elif [[ "$diff" -lt 86400 ]]; then
-    printf '%dh ago' $(( diff / 3600 ))
+  elif [[ $diff -lt 3600 ]]; then
+    printf '%dm ago' $((diff / 60))
+  elif [[ $diff -lt 86400 ]]; then
+    printf '%dh ago' $((diff / 3600))
   else
-    printf '%dd ago' $(( diff / 86400 ))
+    printf '%dd ago' $((diff / 86400))
   fi
 }
 
@@ -344,17 +345,17 @@ fmt_relative_time() {
 # -----------------------------------------------------------------------------
 get_spinner_frame() {
   local tick="${1:-$SPINNER_TICK}"
-  if [[ "$UI_USE_ASCII" == "true" ]]; then
+  if [[ $UI_USE_ASCII == "true" ]]; then
     local count=${#SPINNER_FRAMES_ASCII[@]}
-    printf '%s' "${SPINNER_FRAMES_ASCII[$(( tick % count ))]}"
+    printf '%s' "${SPINNER_FRAMES_ASCII[$((tick % count))]}"
   else
     local count=${#SPINNER_FRAMES_UNICODE[@]}
-    printf '%s' "${SPINNER_FRAMES_UNICODE[$(( tick % count ))]}"
+    printf '%s' "${SPINNER_FRAMES_UNICODE[$((tick % count))]}"
   fi
 }
 
 advance_spinner() {
-  SPINNER_TICK=$(( SPINNER_TICK + 1 ))
+  SPINNER_TICK=$((SPINNER_TICK + 1))
 }
 
 # -----------------------------------------------------------------------------
@@ -365,7 +366,7 @@ advance_spinner() {
 render_progress_bar() {
   local current="$1" max="$2" width="${3:-20}"
   local fill_char empty_char
-  if [[ "$UI_USE_ASCII" == "true" ]]; then
+  if [[ $UI_USE_ASCII == "true" ]]; then
     fill_char="$PROGRESS_FILL_ASCII"
     empty_char="$PROGRESS_EMPTY_ASCII"
   else
@@ -374,19 +375,19 @@ render_progress_bar() {
   fi
 
   local pct=0
-  if [[ "$max" -gt 0 ]]; then
-    pct=$(( (current * 100) / max ))
-    [[ "$pct" -gt 100 ]] && pct=100
+  if [[ $max -gt 0 ]]; then
+    pct=$(((current * 100) / max))
+    [[ $pct -gt 100 ]] && pct=100
   fi
 
-  local filled=$(( (pct * width) / 100 ))
-  local empty=$(( width - filled ))
+  local filled=$(((pct * width) / 100))
+  local empty=$((width - filled))
 
   local color
   color="$(color_by_pct "$pct" 60 85)"
   local fill_str="" empty_str="" i
-  for (( i=0; i<filled; i++ )); do fill_str+="$fill_char"; done
-  for (( i=0; i<empty; i++ )); do empty_str+="$empty_char"; done
+  for ((i = 0; i < filled; i++)); do fill_str+="$fill_char"; done
+  for ((i = 0; i < empty; i++)); do empty_str+="$empty_char"; done
 
   printf '[%b%s%b%b%s%b]' "$color" "$fill_str" "$NC" "$DIM" "$empty_str" "$NC"
 }
@@ -396,7 +397,7 @@ render_progress_bar() {
 render_progress_bar_compact() {
   local current="$1" max="$2" width="${3:-15}" color_mode="${4:-normal}"
   local fill_char empty_char
-  if [[ "$UI_USE_ASCII" == "true" ]]; then
+  if [[ $UI_USE_ASCII == "true" ]]; then
     fill_char="$PROGRESS_FILL_ASCII"
     empty_char="$PROGRESS_EMPTY_ASCII"
   else
@@ -405,23 +406,23 @@ render_progress_bar_compact() {
   fi
 
   local pct=0
-  if [[ "$max" -gt 0 ]]; then
-    pct=$(( (current * 100) / max ))
-    [[ "$pct" -gt 100 ]] && pct=100
+  if [[ $max -gt 0 ]]; then
+    pct=$(((current * 100) / max))
+    [[ $pct -gt 100 ]] && pct=100
   fi
 
-  local filled=$(( (pct * width) / 100 ))
-  local empty=$(( width - filled ))
+  local filled=$(((pct * width) / 100))
+  local empty=$((width - filled))
 
   local color
-  if [[ "$color_mode" == "inverted" ]]; then
+  if [[ $color_mode == "inverted" ]]; then
     color="$(color_by_pct_inverted "$pct")"
   else
     color="$(color_by_pct "$pct" 60 85)"
   fi
   local fill_str="" empty_str="" i
-  for (( i=0; i<filled; i++ )); do fill_str+="$fill_char"; done
-  for (( i=0; i<empty; i++ )); do empty_str+="$empty_char"; done
+  for ((i = 0; i < filled; i++)); do fill_str+="$fill_char"; done
+  for ((i = 0; i < empty; i++)); do empty_str+="$empty_char"; done
 
   printf '%b%s%b%b%s%b' "$color" "$fill_str" "$NC" "$DIM" "$empty_str" "$NC"
 }
@@ -442,7 +443,7 @@ render_history_trail() {
     return
   fi
   local sym_ok sym_fail sym_empty sym_info
-  if [[ "$UI_USE_ASCII" == "true" ]]; then
+  if [[ $UI_USE_ASCII == "true" ]]; then
     sym_ok="$HISTORY_OK_ASCII"
     sym_fail="$HISTORY_FAIL_ASCII"
     sym_empty="$HISTORY_EMPTY_ASCII"
@@ -456,10 +457,10 @@ render_history_trail() {
   local trail="" s
   for s in "${ITERATION_HISTORY[@]}"; do
     case "$s" in
-      OK)    trail+="${GREEN}${sym_ok}${NC}" ;;
-      FAIL)  trail+="${RED}${sym_fail}${NC}" ;;
+      OK) trail+="${GREEN}${sym_ok}${NC}" ;;
+      FAIL) trail+="${RED}${sym_fail}${NC}" ;;
       EMPTY) trail+="${YELLOW}${sym_empty}${NC}" ;;
-      *)     trail+="${DIM}${sym_info}${NC}" ;;
+      *) trail+="${DIM}${sym_info}${NC}" ;;
     esac
   done
   printf '%b' "$trail"
@@ -474,8 +475,8 @@ serialize_history() {
 # Deserialize history from comma-separated string
 deserialize_history() {
   local data="$1"
-  [[ -z "$data" ]] && return
-  IFS=',' read -ra ITERATION_HISTORY <<< "$data"
+  [[ -z $data ]] && return
+  IFS=',' read -ra ITERATION_HISTORY <<<"$data"
 }
 
 # -----------------------------------------------------------------------------
@@ -485,31 +486,31 @@ deserialize_history() {
 # Health pct: completed / (completed + failed) * 100
 compute_health_pct() {
   local completed="$1" failed="$2"
-  local total=$(( completed + failed ))
-  if [[ "$total" -eq 0 ]]; then
+  local total=$((completed + failed))
+  if [[ $total -eq 0 ]]; then
     echo 100
     return
   fi
-  echo $(( (completed * 100) / total ))
+  echo $(((completed * 100) / total))
 }
 
 # Tasks per hour rate
 compute_rate() {
   local completed="$1" elapsed_sec="$2"
-  if [[ "$elapsed_sec" -lt 60 || "$completed" -eq 0 ]]; then
+  if [[ $elapsed_sec -lt 60 || $completed -eq 0 ]]; then
     printf '%s' "—"
     return
   fi
-  local rate_x10=$(( completed * 36000 / elapsed_sec ))
-  local whole=$(( rate_x10 / 10 ))
-  local frac=$(( rate_x10 % 10 ))
+  local rate_x10=$((completed * 36000 / elapsed_sec))
+  local whole=$((rate_x10 / 10))
+  local frac=$((rate_x10 % 10))
   printf '%d.%d/hr' "$whole" "$frac"
 }
 
 # Pull last N "signal" lines from output file for quick diagnostics
 tail_signal_lines() {
   local file="$1" n="${2:-6}"
-  [[ -f "$file" ]] || return 0
+  [[ -f $file ]] || return 0
   grep -E "^(PICKING|WRITING|TESTING|PASSED|MARKING|DONE|REMAINING|EXIT_SIGNAL|ATTEMPT_FAILED|>>> )" -- "$file" 2>/dev/null \
     | tail -n "$n" || true
 }
@@ -517,17 +518,17 @@ tail_signal_lines() {
 # Apply consistent color formatting to a signal line (for Signals sections)
 colorize_signal_line() {
   local line="$1"
-  if [[ "$line" == ">>> "* ]]; then
+  if [[ $line == ">>> "* ]]; then
     printf '%b' "${DIM}${line}${NC}"
-  elif [[ "$line" == "PICKING:"* ]]; then
+  elif [[ $line == "PICKING:"* ]]; then
     printf '%b' "${BOLD}${ORANGE}${line}${NC}"
-  elif [[ "$line" == "DONE:"* || "$line" == "MARKING"* ]]; then
+  elif [[ $line == "DONE:"* || $line == "MARKING"* ]]; then
     printf '%b' "${BOLD}${GREEN}${line}${NC}"
-  elif [[ "$line" == "REMAINING:"* ]]; then
+  elif [[ $line == "REMAINING:"* ]]; then
     printf '%b' "${DIM}${line}${NC}"
-  elif [[ "$line" == "ATTEMPT_FAILED:"* ]]; then
+  elif [[ $line == "ATTEMPT_FAILED:"* ]]; then
     printf '%b' "${BOLD}${RED}${line}${NC}"
-  elif [[ "$line" == "EXIT_SIGNAL:"* ]]; then
+  elif [[ $line == "EXIT_SIGNAL:"* ]]; then
     printf '%b' "${BOLD}${CYAN}${line}${NC}"
   else
     printf '%b' "${DIM}${line}${NC}"
@@ -540,12 +541,12 @@ colorize_signal_line() {
 wait_with_countdown() {
   local seconds="$1"
   local i
-  if [[ "${WAIT_COUNTDOWN:-true}" != "true" || "${QUIET:-false}" == "true" || ! -t 1 ]]; then
+  if [[ ${WAIT_COUNTDOWN:-true} != "true" || ${QUIET:-false} == "true" || ! -t 1 ]]; then
     sleep "$seconds"
     return 0
   fi
 
-  for ((i=seconds; i>0; i--)); do
+  for ((i = seconds; i > 0; i--)); do
     printf "\r%b\033[K" "${BLUE}T${NC}  Next in ${YELLOW}${i}s${NC}"
     sleep 1
   done
@@ -573,7 +574,7 @@ print_status_line() {
   local picked_task="$5"
 
   local task_display="" picked_safe=""
-  if [[ -n "$picked_task" ]]; then
+  if [[ -n $picked_task ]]; then
     picked_safe="$(sanitize_tty_text "$picked_task")"
     task_display=" ${DIM}|${NC} $(truncate_ellipsis "$picked_safe" "$STATUS_TASK_MAX")"
   fi
@@ -599,7 +600,7 @@ clear_status_line() {
 # Render the dynamic banner
 render_dynamic_banner() {
   local iteration="$1"
-  local time_short="$2"  # used for display context, kept for API compat
+  local time_short="$2" # used for display context, kept for API compat
   local quote="$3"
   local state_label="$4"
   local completed="$5" failed="$6" skipped="$7"
@@ -612,29 +613,29 @@ render_dynamic_banner() {
   # State badge color
   local badge_color="$BLUE"
   case "$state_label" in
-    OK|COMPLETED|SUCCESS) badge_color="$GREEN" ;;
-    FAIL|FAILED|ERROR|TIMEOUT) badge_color="$RED" ;;
-    EMPTY|WARN) badge_color="$YELLOW" ;;
+    OK | COMPLETED | SUCCESS) badge_color="$GREEN" ;;
+    FAIL | FAILED | ERROR | TIMEOUT) badge_color="$RED" ;;
+    EMPTY | WARN) badge_color="$YELLOW" ;;
   esac
 
   # Task slot
   local task_slot="" picked_safe=""
-  if [[ -n "$picked_task" ]]; then
+  if [[ -n $picked_task ]]; then
     picked_safe="$(sanitize_tty_text "$picked_task")"
     task_slot="$(truncate_ellipsis "$picked_safe" "$BANNER_TASK_MAX")"
   fi
 
   # Spinner for RUNNING state
   local spinner_display=""
-  if [[ "$state_label" == "RUNNING" ]]; then
+  if [[ $state_label == "RUNNING" ]]; then
     spinner_display="$(get_spinner_frame) "
   fi
 
   # Line 1: Iter + Task + State (+ attempt info)
   local line1
-  if [[ -n "$task_slot" ]]; then
+  if [[ -n $task_slot ]]; then
     line1="${BOLD}${CYAN}#${iteration}${NC} ${DIM}|${NC} ${WHITE}${task_slot}${NC}"
-    if [[ -n "$attempt_info" ]]; then
+    if [[ -n $attempt_info ]]; then
       line1+=" ${DIM}(${attempt_info})${NC}"
     fi
     line1+=" ${DIM}|${NC} ${spinner_display}${BOLD}${badge_color}${state_label}${NC}"
@@ -649,7 +650,7 @@ render_dynamic_banner() {
   # Line 3: Health + rate + history
   local health_pct rate_display history_display=""
   health_pct="$(compute_health_pct "$completed" "$failed")"
-  if [[ "$run_elapsed" -gt 0 ]]; then
+  if [[ $run_elapsed -gt 0 ]]; then
     rate_display="$(compute_rate "$completed" "$run_elapsed")"
   else
     rate_display="—"
@@ -661,7 +662,7 @@ render_dynamic_banner() {
 
   # Line 4: Quote or empty for fixed height
   local line4=""
-  if [[ -n "$quote" ]]; then
+  if [[ -n $quote ]]; then
     line4="${DIM}${MAGENTA}\"${quote}\"${NC}"
   fi
 
@@ -717,31 +718,31 @@ print_error_context_box() {
   width="$(get_box_width)"
   local title_text=" FAILURE DETAILS "
   local title_len=${#title_text}
-  local remaining=$(( width - 2 - title_len - 2 ))
-  [[ "$remaining" -lt 1 ]] && remaining=1
+  local remaining=$((width - 2 - title_len - 2))
+  [[ $remaining -lt 1 ]] && remaining=1
 
   echo ""
   printf "%b\n" "${DIM}${BLUE}${UI_BOX_TL}${UI_BOX_H}${NC} ${RED}${BOLD}FAILURE DETAILS${NC} ${DIM}${BLUE}$(printf '%*s' "$remaining" '' | tr ' ' "$UI_BOX_H")${UI_BOX_TR}${NC}"
 
-  local inner=$(( width - 4 ))
+  local inner=$((width - 4))
 
-  box_line "${DIM}Task:${NC}    ${WHITE}$(truncate_ellipsis "$task_safe" $(( inner - 10 )))${NC}"
-  box_line "${DIM}Reason:${NC}  ${RED}$(truncate_ellipsis "$reason_safe" $(( inner - 10 )))${NC}"
-  if [[ -n "$attempt_info" ]]; then
+  box_line "${DIM}Task:${NC}    ${WHITE}$(truncate_ellipsis "$task_safe" $((inner - 10)))${NC}"
+  box_line "${DIM}Reason:${NC}  ${RED}$(truncate_ellipsis "$reason_safe" $((inner - 10)))${NC}"
+  if [[ -n $attempt_info ]]; then
     box_line "${DIM}Attempt:${NC} ${YELLOW}${attempt_info}${NC}"
   fi
 
-  if [[ -n "$output_file" && -f "$output_file" ]]; then
+  if [[ -n $output_file && -f $output_file ]]; then
     local lines
     lines="$(tail_signal_lines "$output_file" 5)"
-    if [[ -n "$lines" ]]; then
+    if [[ -n $lines ]]; then
       box_sep
       box_line "${DIM}Signals:${NC}"
       while IFS= read -r l; do
         local line_safe
         line_safe="$(sanitize_tty_text "$l")"
         box_line "  $(colorize_signal_line "$line_safe")"
-      done <<< "$lines"
+      done <<<"$lines"
     fi
   fi
 
@@ -773,7 +774,7 @@ print_iteration_result_card() {
   failure_safe="$(sanitize_tty_text "$failure_reason")"
 
   # For failures, show structured error context box
-  if [[ "$status" == "FAIL" && -n "$failure_reason" ]]; then
+  if [[ $status == "FAIL" && -n $failure_reason ]]; then
     print_error_context_box "$task_display" "$failure_reason" "$attempt_info" "$output_file"
     return
   fi
@@ -800,14 +801,14 @@ print_iteration_result_card() {
   # Signal trail
   local lines
   lines="$(tail_signal_lines "$output_file" 6)"
-  if [[ -n "$lines" ]]; then
+  if [[ -n $lines ]]; then
     echo ""
     printf "  %b\n" "${DIM}Signals:${NC}"
     local line_safe
     while IFS= read -r l; do
       line_safe="$(sanitize_tty_text "$l")"
       printf "    %b\n" "$(colorize_signal_line "$line_safe")"
-    done <<< "$lines"
+    done <<<"$lines"
   fi
   hr
 }
@@ -816,7 +817,7 @@ print_iteration_result_card() {
 # OS notifications
 # -----------------------------------------------------------------------------
 notify() {
-  [[ "${ENABLE_NOTIFY:-false}" == "true" ]] || return 0
+  [[ ${ENABLE_NOTIFY:-false} == "true" ]] || return 0
   local title="$1" message="$2"
 
   # macOS
@@ -830,7 +831,7 @@ notify() {
     return 0
   fi
   # tmux
-  if [[ -n "${TMUX:-}" ]] && command -v tmux >/dev/null 2>&1; then
+  if [[ -n ${TMUX:-} ]] && command -v tmux >/dev/null 2>&1; then
     tmux display-message "$title: $message" 2>/dev/null &
     return 0
   fi
@@ -842,8 +843,9 @@ notify() {
 RALPH_LOG_SCHEMA_VERSION=1
 
 log_event_jsonl() {
-  [[ "${LOG_FORMAT:-text}" == "jsonl" && -n "${LOG_FILE:-}" ]] || return 0
-  local event="$1"; shift
+  [[ ${LOG_FORMAT:-text} == "jsonl" && -n ${LOG_FILE:-} ]] || return 0
+  local event="$1"
+  shift
   local ts
   ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S')"
 
@@ -858,7 +860,7 @@ log_event_jsonl() {
   # shellcheck disable=SC2016  # Dollar signs are jq variable references, not shell
   local jq_expr='{ts: $ts, event: $event, schema_version: $schema_version, run_id: $run_id, engine: $engine'
 
-  if [[ -n "${WORKER_ID:-}" && "${WORKER_ID:-0}" -gt 0 ]]; then
+  if [[ -n ${WORKER_ID:-} && ${WORKER_ID:-0} -gt 0 ]]; then
     jq_args+=(--argjson worker_id "$WORKER_ID")
     # shellcheck disable=SC2016
     jq_expr+=', worker_id: $worker_id'
@@ -866,8 +868,9 @@ log_event_jsonl() {
 
   # Add extra key/value pairs
   while [[ $# -ge 2 ]]; do
-    local key="$1" val="$2"; shift 2
-    if [[ "$val" =~ ^[0-9]+$ ]]; then
+    local key="$1" val="$2"
+    shift 2
+    if [[ $val =~ ^[0-9]+$ ]]; then
       jq_args+=(--argjson "$key" "$val")
     else
       jq_args+=(--arg "$key" "$val")
@@ -877,14 +880,14 @@ log_event_jsonl() {
   done
   jq_expr+='}'
 
-  jq -n -c "${jq_args[@]}" "$jq_expr" >> "$LOG_FILE"
+  jq -n -c "${jq_args[@]}" "$jq_expr" >>"$LOG_FILE"
 }
 
 # -----------------------------------------------------------------------------
 # Smarter terminal title (with state summary)
 # -----------------------------------------------------------------------------
 set_smart_title() {
-  [[ "${ENABLE_TITLE:-true}" == "true" ]] || return 0
+  [[ ${ENABLE_TITLE:-true} == "true" ]] || return 0
   is_tty || return 0
   local state="$1"
   local iteration="${2:-}"
@@ -893,33 +896,33 @@ set_smart_title() {
   local task="${5:-}"
 
   local title="Ralph"
-  if [[ -n "$iteration" ]]; then
+  if [[ -n $iteration ]]; then
     title+=" ${UI_SYM_OK}${completed} ${UI_SYM_FAIL}${failed} | #${iteration}"
   fi
 
   case "$state" in
     running)
-      if [[ -n "$task" ]]; then
+      if [[ -n $task ]]; then
         title+=" ${task:0:25}"
       else
         title+=" running"
       fi
       ;;
-    idle)     title+=" | idle" ;;
+    idle) title+=" | idle" ;;
     complete) title+=" | all done" ;;
-    *)        title+=" | ${state}" ;;
+    *) title+=" | ${state}" ;;
   esac
 
   printf "\033]0;%s\007" "$title"
   # iTerm2 badge (OSC 1337)
-  if [[ "${TERM_PROGRAM:-}" == "iTerm.app" ]]; then
+  if [[ ${TERM_PROGRAM:-} == "iTerm.app" ]]; then
     printf "\033]1337;SetBadge=%s\007" "$(printf '%s' "$title" | base64)"
   fi
 }
 
 # Clear iTerm2 badge
 clear_iterm_badge() {
-  if [[ "${TERM_PROGRAM:-}" == "iTerm.app" ]] && is_tty; then
+  if [[ ${TERM_PROGRAM:-} == "iTerm.app" ]] && is_tty; then
     printf "\033]1337;SetBadge=\007"
   fi
 }
@@ -928,8 +931,8 @@ clear_iterm_badge() {
 # Worker status panel
 # -----------------------------------------------------------------------------
 render_worker_panel() {
-  [[ "${NUM_WORKERS:-1}" -gt 1 ]] || return 0
-  [[ -n "${WORKER_STATE_DIR:-}" && -d "${WORKER_STATE_DIR:-}" ]] || return 0
+  [[ ${NUM_WORKERS:-1} -gt 1 ]] || return 0
+  [[ -n ${WORKER_STATE_DIR:-} && -d ${WORKER_STATE_DIR:-} ]] || return 0
 
   echo ""
   printf "  %b\n" "${BOLD}Workers${NC}"
@@ -937,22 +940,22 @@ render_worker_panel() {
   for i in $(seq 1 "$NUM_WORKERS"); do
     local line="" wcc=0 wff=0
     local counters_file="${WORKER_STATE_DIR}/w${i}.counters"
-    if [[ -f "$counters_file" ]]; then
-      IFS= read -r line < "$counters_file" 2>/dev/null || true
-      if [[ "$line" =~ ^COMPLETED=([0-9]+)[[:space:]]+FAILED=([0-9]+) ]]; then
+    if [[ -f $counters_file ]]; then
+      IFS= read -r line <"$counters_file" 2>/dev/null || true
+      if [[ $line =~ ^COMPLETED=([0-9]+)[[:space:]]+FAILED=([0-9]+) ]]; then
         wcc="${BASH_REMATCH[1]}"
         wff="${BASH_REMATCH[2]}"
       fi
     fi
 
     local task="(idle)" status_color="$DIM" status_label="IDLE"
-    if [[ -f "${CLAIMS_FILE:-}" ]]; then
+    if [[ -f ${CLAIMS_FILE:-} ]]; then
       local claim_line
       claim_line="$(grep "^W${i}|" "${CLAIMS_FILE}" 2>/dev/null | tail -1 || true)"
-      if [[ -n "$claim_line" ]]; then
+      if [[ -n $claim_line ]]; then
         local encoded_task
         encoded_task="$(echo "$claim_line" | awk -F'|' '{print $NF}')"
-        if [[ -n "$encoded_task" ]]; then
+        if [[ -n $encoded_task ]]; then
           task="$(decode_claim_task "$encoded_task" 2>/dev/null || echo "?")"
           task="$(truncate_ellipsis "$(sanitize_tty_text "$task")" 25)"
           status_color="$GREEN"
@@ -962,8 +965,8 @@ render_worker_panel() {
     fi
 
     # Check if worker is still alive
-    local wpid_idx=$(( i - 1 ))
-    if [[ -n "${WORKER_PIDS[$wpid_idx]:-}" ]]; then
+    local wpid_idx=$((i - 1))
+    if [[ -n ${WORKER_PIDS[$wpid_idx]:-} ]]; then
       if ! kill -0 "${WORKER_PIDS[$wpid_idx]}" 2>/dev/null; then
         status_color="$DIM"
         status_label="DONE"
@@ -986,36 +989,36 @@ render_worker_panel() {
 DASHBOARD_STATE_FILE=""
 
 setup_dashboard() {
-  [[ "${UI_MODE:-full}" == "dashboard" ]] || return 0
+  [[ ${UI_MODE:-full} == "dashboard" ]] || return 0
   DASHBOARD_STATE_FILE="$(mktemp "${TMPDIR:-/tmp}/ralph_dashboard.XXXXXX")"
   if is_tty; then
-    tput smcup 2>/dev/null || printf "\033[?1049h"  # enter alternate screen buffer
-    tput civis 2>/dev/null || true                   # hide cursor
-    printf "\033[2J"      # clear
-    printf "\033[H"       # home
+    tput smcup 2>/dev/null || printf "\033[?1049h" # enter alternate screen buffer
+    tput civis 2>/dev/null || true                 # hide cursor
+    printf "\033[2J"                               # clear
+    printf "\033[H"                                # home
   fi
 }
 
 cleanup_dashboard() {
-  [[ "${UI_MODE:-full}" == "dashboard" ]] || return 0
+  [[ ${UI_MODE:-full} == "dashboard" ]] || return 0
   if is_tty; then
-    tput cnorm 2>/dev/null || true                   # show cursor
-    tput rmcup 2>/dev/null || printf "\033[?1049l"   # leave alternate screen buffer
+    tput cnorm 2>/dev/null || true                 # show cursor
+    tput rmcup 2>/dev/null || printf "\033[?1049l" # leave alternate screen buffer
   fi
-  if [[ -n "${DASHBOARD_STATE_FILE:-}" ]]; then
+  if [[ -n ${DASHBOARD_STATE_FILE:-} ]]; then
     rm -f "$DASHBOARD_STATE_FILE" 2>/dev/null || true
   fi
 }
 
 # Write current state for dashboard renderer
 write_dashboard_state() {
-  [[ -n "${DASHBOARD_STATE_FILE:-}" ]] || return 0
+  [[ -n ${DASHBOARD_STATE_FILE:-} ]] || return 0
   local iteration="$1" state="$2" task="$3"
   local completed="$4" failed="$5" skipped="$6"
   local elapsed="$7" timeout="$8"
   local tools="$9" max_tools="${10}"
   local quote="${11:-}" run_elapsed="${12:-0}"
-  cat > "$DASHBOARD_STATE_FILE" <<EOF
+  cat >"$DASHBOARD_STATE_FILE" <<EOF
 ITERATION=${iteration}
 STATE=${state}
 TASK=${task}
@@ -1034,24 +1037,24 @@ EOF
 
 # Read dashboard state from file (sets _DASH_* variables)
 read_dashboard_state() {
-  [[ -n "${DASHBOARD_STATE_FILE:-}" && -f "${DASHBOARD_STATE_FILE:-}" ]] || return 1
+  [[ -n ${DASHBOARD_STATE_FILE:-} && -f ${DASHBOARD_STATE_FILE:-} ]] || return 1
   while IFS='=' read -r key val; do
     case "$key" in
-      ITERATION)   _DASH_ITERATION="$val" ;;
-      STATE)       _DASH_STATE="$val" ;;
-      TASK)        _DASH_TASK="$val" ;;
-      COMPLETED)   _DASH_COMPLETED="$val" ;;
-      FAILED)      _DASH_FAILED="$val" ;;
-      SKIPPED)     _DASH_SKIPPED="$val" ;;
-      ELAPSED)     _DASH_ELAPSED="$val" ;;
-      TIMEOUT)     _DASH_TIMEOUT="$val" ;;
-      TOOLS)       _DASH_TOOLS="$val" ;;
-      MAX_TOOLS)   _DASH_MAX_TOOLS="$val" ;;
-      QUOTE)       _DASH_QUOTE="$val" ;;
-      HISTORY)     _DASH_HISTORY="$val" ;;
+      ITERATION) _DASH_ITERATION="$val" ;;
+      STATE) _DASH_STATE="$val" ;;
+      TASK) _DASH_TASK="$val" ;;
+      COMPLETED) _DASH_COMPLETED="$val" ;;
+      FAILED) _DASH_FAILED="$val" ;;
+      SKIPPED) _DASH_SKIPPED="$val" ;;
+      ELAPSED) _DASH_ELAPSED="$val" ;;
+      TIMEOUT) _DASH_TIMEOUT="$val" ;;
+      TOOLS) _DASH_TOOLS="$val" ;;
+      MAX_TOOLS) _DASH_MAX_TOOLS="$val" ;;
+      QUOTE) _DASH_QUOTE="$val" ;;
+      HISTORY) _DASH_HISTORY="$val" ;;
       RUN_ELAPSED) _DASH_RUN_ELAPSED="$val" ;;
     esac
-  done < "$DASHBOARD_STATE_FILE"
+  done <"$DASHBOARD_STATE_FILE"
 }
 
 # Render the full dashboard (clears screen and redraws)
@@ -1077,26 +1080,26 @@ render_dashboard() {
   read_dashboard_state 2>/dev/null || true
 
   # Override with live data if available
-  if [[ -n "$raw_jsonl" && -f "$raw_jsonl" && "$iter_started" -gt 0 ]]; then
+  if [[ -n $raw_jsonl && -f $raw_jsonl && $iter_started -gt 0 ]]; then
     local _now
     _now="$(date '+%s')"
-    _DASH_ELAPSED=$(( _now - iter_started ))
-    if [[ "${ENGINE:-claude}" == "codex" ]]; then
+    _DASH_ELAPSED=$((_now - iter_started))
+    if [[ ${ENGINE:-claude} == "codex" ]]; then
       _DASH_TOOLS="$(count_tool_calls_from_codex_jsonl "$raw_jsonl" 2>/dev/null || echo 0)"
     else
       _DASH_TOOLS="$(count_tool_calls_from_jsonl "$raw_jsonl" 2>/dev/null || echo 0)"
     fi
-    [[ -z "$_DASH_TOOLS" ]] && _DASH_TOOLS=0
+    [[ -z $_DASH_TOOLS ]] && _DASH_TOOLS=0
   fi
 
-  if [[ -n "$output_file" && -f "$output_file" ]]; then
+  if [[ -n $output_file && -f $output_file ]]; then
     local picked
     picked="$(grep 'PICKING: ' "$output_file" 2>/dev/null | sed 's/.*PICKING: //' | head -1 || true)"
-    [[ -n "$picked" ]] && _DASH_TASK="$picked"
+    [[ -n $picked ]] && _DASH_TASK="$picked"
   fi
 
   # Deserialize history
-  if [[ -n "$_DASH_HISTORY" ]]; then
+  if [[ -n $_DASH_HISTORY ]]; then
     deserialize_history "$_DASH_HISTORY"
   fi
 
@@ -1111,9 +1114,9 @@ render_dashboard() {
 
   badge_color="$BLUE"
   case "$_DASH_STATE" in
-    OK|COMPLETED|SUCCESS) badge_color="$GREEN" ;;
-    FAIL|FAILED|ERROR|TIMEOUT) badge_color="$RED" ;;
-    EMPTY|WARN) badge_color="$YELLOW" ;;
+    OK | COMPLETED | SUCCESS) badge_color="$GREEN" ;;
+    FAIL | FAILED | ERROR | TIMEOUT) badge_color="$RED" ;;
+    EMPTY | WARN) badge_color="$YELLOW" ;;
   esac
 
   # -- Render into buffer for flicker-free output --
@@ -1125,15 +1128,15 @@ render_dashboard() {
 
     # Iteration + state
     local task_safe=""
-    if [[ -n "$_DASH_TASK" ]]; then
+    if [[ -n $_DASH_TASK ]]; then
       task_safe="$(truncate_ellipsis "$(sanitize_tty_text "$_DASH_TASK")" 35)"
     fi
-    if [[ "$_DASH_STATE" == "RUNNING" ]]; then
+    if [[ $_DASH_STATE == "RUNNING" ]]; then
       box_line "${BOLD}${CYAN}Iteration #${_DASH_ITERATION}${NC}  ${CYAN}${spinner}${NC} ${BOLD}${badge_color}${_DASH_STATE}${NC}"
     else
       box_line "${BOLD}${CYAN}Iteration #${_DASH_ITERATION}${NC}  ${BOLD}${badge_color}${_DASH_STATE}${NC}"
     fi
-    if [[ -n "$task_safe" ]]; then
+    if [[ -n $task_safe ]]; then
       box_line "${DIM}Task:${NC} ${WHITE}${task_safe}${NC}"
     fi
 
@@ -1143,13 +1146,13 @@ render_dashboard() {
     local time_bar tools_bar time_pct=0 tools_pct=0
     time_bar="$(render_progress_bar "$_DASH_ELAPSED" "$_DASH_TIMEOUT" 20)"
     tools_bar="$(render_progress_bar "$_DASH_TOOLS" "$_DASH_MAX_TOOLS" 20)"
-    if [[ "$_DASH_TIMEOUT" -gt 0 ]]; then
-      time_pct=$(( (_DASH_ELAPSED * 100) / _DASH_TIMEOUT ))
-      [[ "$time_pct" -gt 100 ]] && time_pct=100
+    if [[ $_DASH_TIMEOUT -gt 0 ]]; then
+      time_pct=$(((_DASH_ELAPSED * 100) / _DASH_TIMEOUT))
+      [[ $time_pct -gt 100 ]] && time_pct=100
     fi
-    if [[ "$_DASH_MAX_TOOLS" -gt 0 ]]; then
-      tools_pct=$(( (_DASH_TOOLS * 100) / _DASH_MAX_TOOLS ))
-      [[ "$tools_pct" -gt 100 ]] && tools_pct=100
+    if [[ $_DASH_MAX_TOOLS -gt 0 ]]; then
+      tools_pct=$(((_DASH_TOOLS * 100) / _DASH_MAX_TOOLS))
+      [[ $tools_pct -gt 100 ]] && tools_pct=100
     fi
     box_line "${DIM}Time ${NC} ${time_bar} ${DIM}${time_pct}%  ${_DASH_ELAPSED}s/${_DASH_TIMEOUT}s${NC}"
     box_line "${DIM}Tools${NC} ${tools_bar} ${DIM}${tools_pct}%  ${_DASH_TOOLS}/${_DASH_MAX_TOOLS}${NC}"
@@ -1168,27 +1171,28 @@ render_dashboard() {
     fi
 
     # Worker panel (parallel mode)
-    if [[ "${NUM_WORKERS:-1}" -gt 1 && -n "${WORKER_STATE_DIR:-}" && -d "${WORKER_STATE_DIR:-}" ]]; then
+    if [[ ${NUM_WORKERS:-1} -gt 1 && -n ${WORKER_STATE_DIR:-} && -d ${WORKER_STATE_DIR:-} ]]; then
       box_sep
       box_line "${BOLD}Workers${NC}"
       local i
       for i in $(seq 1 "$NUM_WORKERS"); do
         local wline="" wcc=0 wff=0
         local cf="${WORKER_STATE_DIR}/w${i}.counters"
-        if [[ -f "$cf" ]]; then
-          IFS= read -r wline < "$cf" 2>/dev/null || true
-          if [[ "$wline" =~ ^COMPLETED=([0-9]+)[[:space:]]+FAILED=([0-9]+) ]]; then
-            wcc="${BASH_REMATCH[1]}"; wff="${BASH_REMATCH[2]}"
+        if [[ -f $cf ]]; then
+          IFS= read -r wline <"$cf" 2>/dev/null || true
+          if [[ $wline =~ ^COMPLETED=([0-9]+)[[:space:]]+FAILED=([0-9]+) ]]; then
+            wcc="${BASH_REMATCH[1]}"
+            wff="${BASH_REMATCH[2]}"
           fi
         fi
         local wtask="(idle)" wstatus="${DIM}IDLE${NC}"
-        if [[ -f "${CLAIMS_FILE:-}" ]]; then
+        if [[ -f ${CLAIMS_FILE:-} ]]; then
           local cl
           cl="$(grep "^W${i}|" "${CLAIMS_FILE}" 2>/dev/null | tail -1 || true)"
-          if [[ -n "$cl" ]]; then
+          if [[ -n $cl ]]; then
             local enc
             enc="$(echo "$cl" | awk -F'|' '{print $NF}')"
-            if [[ -n "$enc" ]]; then
+            if [[ -n $enc ]]; then
               wtask="$(decode_claim_task "$enc" 2>/dev/null || echo "?")"
               wtask="$(truncate_ellipsis "$(sanitize_tty_text "$wtask")" 22)"
               wstatus="${GREEN}RUN${NC}"
@@ -1200,22 +1204,22 @@ render_dashboard() {
     fi
 
     # Recent output lines
-    if [[ -n "$output_file" && -f "$output_file" ]]; then
+    if [[ -n $output_file && -f $output_file ]]; then
       local recent
       recent="$(tail_signal_lines "$output_file" 3)"
-      if [[ -n "$recent" ]]; then
+      if [[ -n $recent ]]; then
         box_sep
         box_line "${DIM}Recent:${NC}"
         while IFS= read -r l; do
           local ls
           ls="$(sanitize_tty_text "$l")"
           box_line "  $(colorize_signal_line "$(truncate_ellipsis "$ls" 45)")"
-        done <<< "$recent"
+        done <<<"$recent"
       fi
     fi
 
     # Quote
-    if [[ -n "$_DASH_QUOTE" ]]; then
+    if [[ -n $_DASH_QUOTE ]]; then
       box_line ""
       box_line "${DIM}${MAGENTA}\"${_DASH_QUOTE}\"${NC}"
     fi
@@ -1231,12 +1235,12 @@ render_dashboard() {
 dashboard_countdown() {
   local seconds="$1"
   local i
-  for ((i=seconds; i>0; i--)); do
+  for ((i = seconds; i > 0; i--)); do
     write_dashboard_state "${_DASH_ITERATION:-0}" "IDLE (${i}s)" "" \
       "${COMPLETED_COUNT:-0}" "${FAILED_COUNT:-0}" \
       "$(get_skipped_tasks 2>/dev/null | wc -l | tr -d ' ')" \
       "0" "${ITERATION_TIMEOUT:-600}" "0" "${MAX_TOOL_CALLS:-50}" "" \
-      "$(( $(date '+%s') - STARTED_EPOCH ))"
+      "$(($(date '+%s') - STARTED_EPOCH))"
     render_dashboard "" "" 0
     sleep 1
   done
@@ -1248,7 +1252,7 @@ dashboard_countdown() {
 show_run_summary() {
   local now elapsed skipped_count
   now="$(date '+%s')"
-  elapsed=$(( now - STARTED_EPOCH ))
+  elapsed=$((now - STARTED_EPOCH))
   skipped_count="$(get_skipped_tasks | wc -l | tr -d ' ')"
 
   # Restore normal screen if dashboard was active
@@ -1262,13 +1266,13 @@ show_run_summary() {
   echo ""
   hr
   printf "%b\n" "${BOLD}${BLUE}Run Summary${NC}"
-  printf "  %-16s %b\n" "Run ID:"     "${CYAN}${RUN_ID}${NC}"
-  printf "  %-16s %b\n" "Duration:"   "${CYAN}$(fmt_hms "$elapsed")${NC}"
+  printf "  %-16s %b\n" "Run ID:" "${CYAN}${RUN_ID}${NC}"
+  printf "  %-16s %b\n" "Duration:" "${CYAN}$(fmt_hms "$elapsed")${NC}"
   printf "  %-16s %b\n" "Iterations:" "${CYAN}${ITERATION_COUNT}${NC}"
-  printf "  %-16s %b\n" "Completed:"  "${GREEN}${COMPLETED_COUNT}${NC}"
-  printf "  %-16s %b\n" "Failed:"     "${RED}${FAILED_COUNT}${NC}"
-  printf "  %-16s %b\n" "Skipped:"    "${YELLOW}${skipped_count}${NC}"
-  printf "  %-16s %b\n" "Rate:"       "${CYAN}${rate_display}${NC}"
+  printf "  %-16s %b\n" "Completed:" "${GREEN}${COMPLETED_COUNT}${NC}"
+  printf "  %-16s %b\n" "Failed:" "${RED}${FAILED_COUNT}${NC}"
+  printf "  %-16s %b\n" "Skipped:" "${YELLOW}${skipped_count}${NC}"
+  printf "  %-16s %b\n" "Rate:" "${CYAN}${rate_display}${NC}"
 
   local health_bar
   health_bar="$(render_progress_bar_compact "$health_pct" 100 10 inverted)"

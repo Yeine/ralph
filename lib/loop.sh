@@ -9,14 +9,14 @@
 # Returns 0 (true) if stalled, 1 (false) otherwise.
 _check_stall_exit() {
   local max_stall="${MAX_STALL_ITERATIONS:-3}"
-  [[ "$max_stall" -gt 0 ]] || return 1
+  [[ $max_stall -gt 0 ]] || return 1
   local history_len=${#ITERATION_HISTORY[@]}
-  [[ "$history_len" -ge "$max_stall" ]] || return 1
+  [[ $history_len -ge $max_stall ]] || return 1
 
   local i status
-  for (( i = history_len - max_stall; i < history_len; i++ )); do
+  for ((i = history_len - max_stall; i < history_len; i++)); do
     status="${ITERATION_HISTORY[$i]}"
-    if [[ "$status" == "OK" || "$status" == "FAIL" ]]; then
+    if [[ $status == "OK" || $status == "FAIL" ]]; then
       return 1
     fi
   done
@@ -45,7 +45,7 @@ run_loop() {
     run_iteration "$iteration" "$prompt_file" || rc=$?
 
     # BUG FIX #4: Handle special return codes from run_iteration
-    if [[ "$rc" -eq 98 ]]; then
+    if [[ $rc -eq 98 ]]; then
       # EXIT_SIGNAL with EXIT_ON_COMPLETE=true
       break
     fi
@@ -64,10 +64,10 @@ run_loop() {
       break
     fi
 
-    if [[ "${UI_MODE:-full}" == "full" ]]; then
+    if [[ ${UI_MODE:-full} == "full" ]]; then
       echo ""
       log_dim "--- Iteration $iteration complete ---"
-      [[ -n "${LOG_FILE:-}" && "${LOG_FORMAT:-text}" == "text" ]] && echo "--- Iteration $iteration complete ---" >> "$LOG_FILE"
+      [[ -n ${LOG_FILE:-} && ${LOG_FORMAT:-text} == "text" ]] && echo "--- Iteration $iteration complete ---" >>"$LOG_FILE"
     fi
 
     iteration=$((iteration + 1))
@@ -75,10 +75,10 @@ run_loop() {
     set_smart_title "idle" "" "$COMPLETED_COUNT" "$FAILED_COUNT" ""
 
     # Wait between iterations (with keyboard shortcuts)
-    if [[ "${UI_MODE:-full}" == "dashboard" ]]; then
+    if [[ ${UI_MODE:-full} == "dashboard" ]]; then
       dashboard_countdown "$WAIT_TIME"
-    elif [[ "${UI_MODE:-full}" == "full" ]]; then
-      if [[ "$QUIET" == "true" ]]; then
+    elif [[ ${UI_MODE:-full} == "full" ]]; then
+      if [[ $QUIET == "true" ]]; then
         log_info "Waiting $(fmt_hms "$WAIT_TIME")... (Ctrl+C to stop)"
         sleep "$WAIT_TIME"
       else
@@ -109,12 +109,12 @@ run_worker() {
   WORKER_ID="$worker_id"
 
   # Redirect all output to worker log file
-  exec > "$log_file" 2>&1
+  exec >"$log_file" 2>&1
 
   # In multi-worker mode, separate log files per worker to avoid interleaving
-  if [[ -n "${LOG_FILE:-}" ]]; then
+  if [[ -n ${LOG_FILE:-} ]]; then
     LOG_FILE="${LOG_FILE%.log}_w${worker_id}.log"
-    : > "$LOG_FILE"  # create early so file exists even if no iterations run
+    : >"$LOG_FILE" # create early so file exists even if no iterations run
   fi
 
   # Disable features that don't make sense in worker subprocesses
@@ -192,7 +192,7 @@ run_parallel() {
   WORKER_PIDS=()
   TAIL_PIDS=()
 
-  if [[ "${UI_MODE:-full}" != "minimal" ]]; then
+  if [[ ${UI_MODE:-full} != "minimal" ]]; then
     echo ""
     log_info "Spawning ${NUM_WORKERS} parallel workers..."
     echo ""
@@ -202,23 +202,23 @@ run_parallel() {
   for i in $(seq 1 "$NUM_WORKERS"); do
     run_worker "$i" "$prompt_file" &
     WORKER_PIDS+=($!)
-    if [[ "${UI_MODE:-full}" != "minimal" ]]; then
-      log_ok "Worker W${i} started (PID ${WORKER_PIDS[${#WORKER_PIDS[@]}-1]})"
+    if [[ ${UI_MODE:-full} != "minimal" ]]; then
+      log_ok "Worker W${i} started (PID ${WORKER_PIDS[${#WORKER_PIDS[@]} - 1]})"
     fi
     # Stagger starts to reduce initial task collision
-    if [[ "$i" -lt "$NUM_WORKERS" ]]; then
+    if [[ $i -lt $NUM_WORKERS ]]; then
       sleep 5
     fi
   done
 
-  if [[ "${UI_MODE:-full}" != "minimal" ]]; then
+  if [[ ${UI_MODE:-full} != "minimal" ]]; then
     echo ""
     log_info "All workers running. Streaming output..."
     hr
   fi
 
   # Dashboard mode: render dashboard instead of tailing logs
-  if [[ "${UI_MODE:-full}" == "dashboard" ]]; then
+  if [[ ${UI_MODE:-full} == "dashboard" ]]; then
     _run_parallel_dashboard
   else
     _run_parallel_tailed "$prompt_file"
@@ -242,11 +242,11 @@ run_parallel() {
 _run_parallel_tailed() {
   # Color palette for worker prefixes
   local worker_colors=("$GREEN" "$CYAN" "$YELLOW" "$MAGENTA" "$BLUE" "$ORANGE"
-                       "$GREEN" "$CYAN" "$YELLOW" "$MAGENTA" "$BLUE" "$ORANGE"
-                       "$GREEN" "$CYAN" "$YELLOW" "$MAGENTA")
+    "$GREEN" "$CYAN" "$YELLOW" "$MAGENTA" "$BLUE" "$ORANGE"
+    "$GREEN" "$CYAN" "$YELLOW" "$MAGENTA")
 
   # Start per-worker tail processes with colored prefixes
-  if [[ "${UI_MODE:-full}" != "minimal" ]]; then
+  if [[ ${UI_MODE:-full} != "minimal" ]]; then
     for i in $(seq 1 "$NUM_WORKERS"); do
       local color="${worker_colors[$((i - 1))]}"
       local wlog="${WORKER_STATE_DIR}/w${i}.log"
@@ -261,7 +261,7 @@ _run_parallel_tailed() {
 
   # Wait for all workers to finish
   local all_done=false
-  while [[ "$all_done" == "false" ]]; do
+  while [[ $all_done == "false" ]]; do
     all_done=true
     for pid in "${WORKER_PIDS[@]}"; do
       if kill -0 "$pid" 2>/dev/null; then
@@ -269,7 +269,7 @@ _run_parallel_tailed() {
         break
       fi
     done
-    if [[ "$all_done" == "false" ]]; then
+    if [[ $all_done == "false" ]]; then
       sleep 2
     fi
   done
@@ -284,7 +284,7 @@ _run_parallel_tailed() {
 
   sleep 1
 
-  if [[ "${UI_MODE:-full}" != "minimal" ]]; then
+  if [[ ${UI_MODE:-full} != "minimal" ]]; then
     echo ""
     hr
   fi
@@ -293,7 +293,7 @@ _run_parallel_tailed() {
 # Parallel mode with dashboard rendering
 _run_parallel_dashboard() {
   local all_done=false
-  while [[ "$all_done" == "false" ]]; do
+  while [[ $all_done == "false" ]]; do
     all_done=true
     for pid in "${WORKER_PIDS[@]}"; do
       if kill -0 "$pid" 2>/dev/null; then
@@ -302,7 +302,7 @@ _run_parallel_dashboard() {
       fi
     done
 
-    if [[ "$all_done" == "false" ]]; then
+    if [[ $all_done == "false" ]]; then
       # Aggregate live counters for display
       local totals
       totals="$(read_all_counters)"
@@ -313,7 +313,7 @@ _run_parallel_dashboard() {
 
       local skipped_now run_elapsed
       skipped_now="$(get_skipped_tasks 2>/dev/null | wc -l | tr -d ' ')"
-      run_elapsed=$(( $(date '+%s') - STARTED_EPOCH ))
+      run_elapsed=$(($(date '+%s') - STARTED_EPOCH))
 
       write_dashboard_state "$dash_iterations" "RUNNING" "" \
         "$dash_completed" "$dash_failed" "$skipped_now" \

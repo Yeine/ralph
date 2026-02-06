@@ -18,7 +18,7 @@ _csv_to_args() {
     trimmed="${item#"${item%%[![:space:]]*}"}"
     # Trim trailing whitespace
     trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
-    [[ -z "$trimmed" ]] && continue
+    [[ -z $trimmed ]] && continue
     _CSV_RESULT+=("$trimmed")
   done
 }
@@ -48,7 +48,7 @@ count_tool_calls_from_codex_jsonl() {
         ) | 1
       ' 2>/dev/null \
     | wc -l | tr -d ' ' || echo "0")"
-  [[ -z "$raw_count" ]] && raw_count=0
+  [[ -z $raw_count ]] && raw_count=0
   echo "$raw_count"
 }
 
@@ -77,23 +77,23 @@ run_engine() {
       local line="$1"
       local safe_line
       safe_line="$(sanitize_tty_text "$line")"
-      if [[ "$quiet" == "false" ]]; then
+      if [[ $quiet == "false" ]]; then
         # Clear any in-place status line before printing engine output
         # Skip when stdout is not a TTY (e.g. worker log files) to avoid
         # \r\033[K overwriting the [Wn] prefix added by tail
         is_tty && clear_status_line
-        if [[ "$line" == ">>> "* ]]; then
+        if [[ $line == ">>> "* ]]; then
           # Tool-call announcements: compact dim format
           printf "%b\n" "${DIM}${safe_line}${NC}"
-        elif [[ "$line" == "PICKING:"* ]]; then
+        elif [[ $line == "PICKING:"* ]]; then
           printf "%b\n" "${BOLD}${ORANGE}${safe_line}${NC}"
-        elif [[ "$line" == "DONE:"* || "$line" == "MARKING"* ]]; then
+        elif [[ $line == "DONE:"* || $line == "MARKING"* ]]; then
           printf "%b\n" "${BOLD}${GREEN}${safe_line}${NC}"
-        elif [[ "$line" == "REMAINING:"* ]]; then
+        elif [[ $line == "REMAINING:"* ]]; then
           printf "%b\n" "${DIM}${safe_line}${NC}"
-        elif [[ "$line" == "ATTEMPT_FAILED:"* ]]; then
+        elif [[ $line == "ATTEMPT_FAILED:"* ]]; then
           printf "%b\n" "${BOLD}${RED}${safe_line}${NC}"
-        elif [[ "$line" == "EXIT_SIGNAL:"* ]]; then
+        elif [[ $line == "EXIT_SIGNAL:"* ]]; then
           printf "%b\n" "${BOLD}${CYAN}${safe_line}${NC}"
         fi
       fi
@@ -101,36 +101,36 @@ run_engine() {
       if printf '%s\n' "$line" | grep -qiE "^(PICKING|WRITING|TESTING|PASSED|MARKING|DONE|REMAINING|EXIT_SIGNAL|ATTEMPT_FAILED|>>> )"; then
         # Deduplicate: skip signals we've already recorded (e.g. agent emits DONE: twice)
         # Tool calls (">>> ") are exempt — duplicates are expected there.
-        if [[ "$line" != ">>> "* ]] && grep -qFx "$line" "$output_file" 2>/dev/null; then
+        if [[ $line != ">>> "* ]] && grep -qFx "$line" "$output_file" 2>/dev/null; then
           return
         fi
-        printf '%s\n' "$line" >> "$output_file"
-        [[ -n "$log_file" ]] && printf '%s\n' "$safe_line" >> "$log_file"
+        printf '%s\n' "$line" >>"$output_file"
+        [[ -n $log_file ]] && printf '%s\n' "$safe_line" >>"$log_file"
       fi
 
       # Real-time claim update for parallel coordination
-      if [[ "$line" == "PICKING:"* && "${WORKER_ID:-0}" -gt 0 ]]; then
+      if [[ $line == "PICKING:"* && ${WORKER_ID:-0} -gt 0 ]]; then
         update_claim "$WORKER_ID" "${line#PICKING: }" 2>/dev/null || true
       fi
     }
 
-    if [[ "$engine" == "codex" ]]; then
+    if [[ $engine == "codex" ]]; then
       local -a codex_args=()
       # shellcheck disable=SC2153  # CODEX_ARGS is set in bin/ralph
       if [[ ${#CODEX_ARGS[@]} -gt 0 ]]; then
         # Prefer the repeatable --codex-flag array (preserves quoting)
         codex_args=("${CODEX_ARGS[@]}")
-      elif [[ -n "$codex_flags" ]]; then
+      elif [[ -n $codex_flags ]]; then
         # Fallback: split the --codex-flags string on whitespace (simple split)
-        read -r -a codex_args <<< "$codex_flags"
+        read -r -a codex_args <<<"$codex_flags"
       fi
       # Codex path: JSONL output via --json, parsed with jq
       printf '%s' "$prompt_content" \
-      | run_with_timeout "$timeout_seconds" \
+        | run_with_timeout "$timeout_seconds" \
           codex exec "${codex_args[@]}" --json - \
           2>/dev/null \
-      | tee "$raw_jsonl" \
-      | jq -r --unbuffered '
+        | tee "$raw_jsonl" \
+        | jq -r --unbuffered '
           if .type == "item.completed" and .item.type == "agent_message" then
               .item.text // empty
           elif .type == "item.started" and .item.type == "command_execution" then
@@ -141,24 +141,24 @@ run_engine() {
               empty
           end
         ' 2>/dev/null \
-      | while IFS= read -r line; do
+        | while IFS= read -r line; do
           _process_line "$line"
         done
 
       # pipe: printf[0] | run_with_timeout[1] | tee[2] | jq[3] | while[4]
       _pstat=("${PIPESTATUS[@]}")
-      echo "${_pstat[1]}" > "$pipe_rc_file"
-      echo "${_pstat[3]}" > "$jq_rc_file"
+      echo "${_pstat[1]}" >"$pipe_rc_file"
+      echo "${_pstat[3]}" >"$jq_rc_file"
     else
       # Claude path: stream-json output parsed via jq
       local claude_args=(-p "$prompt_content" --verbose --output-format stream-json)
-      if [[ -n "${ALLOWED_TOOLS:-}" ]]; then
+      if [[ -n ${ALLOWED_TOOLS:-} ]]; then
         _csv_to_args "$ALLOWED_TOOLS"
         for _tool in "${_CSV_RESULT[@]}"; do
           claude_args+=(--allowedTools "$_tool")
         done
       fi
-      if [[ -n "${DISALLOWED_TOOLS:-}" ]]; then
+      if [[ -n ${DISALLOWED_TOOLS:-} ]]; then
         _csv_to_args "$DISALLOWED_TOOLS"
         for _tool in "${_CSV_RESULT[@]}"; do
           claude_args+=(--disallowedTools "$_tool")
@@ -166,9 +166,9 @@ run_engine() {
       fi
       run_with_timeout "$timeout_seconds" \
         claude "${claude_args[@]}" \
-          </dev/null 2>&1 \
-      | tee "$raw_jsonl" \
-      | jq -r --unbuffered '
+        </dev/null 2>&1 \
+        | tee "$raw_jsonl" \
+        | jq -r --unbuffered '
           if .message.content != null and (.message.content | type) == "array" then
               (.message.content[] | select(.type == "text") | .text),
               (.message.content[] | select(.type == "tool_use") |
@@ -185,14 +185,14 @@ run_engine() {
               empty
           end
       ' 2>/dev/null \
-      | while IFS= read -r line; do
+        | while IFS= read -r line; do
           _process_line "$line"
         done
 
       # pipe: run_with_timeout[0] | tee[1] | jq[2] | while[3]
       _pstat=("${PIPESTATUS[@]}")
-      echo "${_pstat[0]}" > "$pipe_rc_file"
-      echo "${_pstat[2]}" > "$jq_rc_file"
+      echo "${_pstat[0]}" >"$pipe_rc_file"
+      echo "${_pstat[2]}" >"$jq_rc_file"
     fi
     exit 0
   ) &

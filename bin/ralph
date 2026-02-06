@@ -17,19 +17,19 @@ set -euo pipefail
 # Resolve symlinks portably (readlink -f not available on stock macOS)
 _resolve_symlink() {
   local target="$1"
-  if [[ "$target" != */* ]]; then
+  if [[ $target != */* ]]; then
     local resolved
     resolved="$(command -v -- "$target" 2>/dev/null || true)"
-    if [[ -n "$resolved" && "$resolved" == /* ]]; then
+    if [[ -n $resolved && $resolved == /* ]]; then
       target="$resolved"
     fi
   fi
-  while [[ -L "$target" ]]; do
+  while [[ -L $target ]]; do
     local dir
     dir="$(cd "$(dirname "$target")" && pwd)"
     target="$(readlink "$target")"
     # Handle relative symlink targets
-    [[ "$target" != /* ]] && target="${dir}/${target}"
+    [[ $target != /* ]] && target="${dir}/${target}"
   done
   echo "$target"
 }
@@ -38,12 +38,12 @@ RALPH_REAL_PATH="$(_resolve_symlink "${BASH_SOURCE[0]}")"
 RALPH_SCRIPT_DIR="$(cd "$(dirname "$RALPH_REAL_PATH")" && pwd)"
 RALPH_LIB_DIR="${RALPH_LIB_DIR:-${RALPH_SCRIPT_DIR}/../lib}"
 
-if [[ ! -d "$RALPH_LIB_DIR" ]]; then
+if [[ ! -d $RALPH_LIB_DIR ]]; then
   # Fallback for system-wide install
   RALPH_LIB_DIR="/usr/local/lib/ralph"
 fi
 
-if [[ ! -d "$RALPH_LIB_DIR" ]]; then
+if [[ ! -d $RALPH_LIB_DIR ]]; then
   echo "Error: Cannot find ralph lib directory at ${RALPH_LIB_DIR}" >&2
   exit 1
 fi
@@ -59,19 +59,19 @@ setup_colors
 # Defaults
 # -----------------------------------------------------------------------------
 PROMPT_FILE="RALPH_TASK.md"
-MAX_ITERATIONS=0        # 0 = unlimited
+MAX_ITERATIONS=0 # 0 = unlimited
 WAIT_TIME=5
 USE_CAFFEINATE=false
 LOG_FILE=""
 ATTEMPTS_FILE="${ATTEMPTS_FILE:-.ralph_attempts.json}"
-MAX_ATTEMPTS=3          # Skip task after this many failures
-ITERATION_TIMEOUT=600   # 10 minutes max per iteration
-MAX_TOOL_CALLS=50       # Consider stuck if more than this without completing
-MAX_STALL_ITERATIONS=3  # Auto-exit after N consecutive non-productive iterations (0=disabled)
+MAX_ATTEMPTS=3         # Skip task after this many failures
+ITERATION_TIMEOUT=600  # 10 minutes max per iteration
+MAX_TOOL_CALLS=50      # Consider stuck if more than this without completing
+MAX_STALL_ITERATIONS=3 # Auto-exit after N consecutive non-productive iterations (0=disabled)
 QUIET=false
 ENGINE="claude"
 CODEX_EXEC_FLAGS="--full-auto"
-CODEX_ARGS=()              # Repeatable --codex-flag entries (preferred over CODEX_EXEC_FLAGS)
+CODEX_ARGS=() # Repeatable --codex-flag entries (preferred over CODEX_EXEC_FLAGS)
 SHOW_QUOTE_EACH_ITERATION=true
 BELL_ON_COMPLETION=false
 BELL_ON_END=false
@@ -82,13 +82,13 @@ WAIT_COUNTDOWN=true
 ALLOWED_TOOLS=""
 DISALLOWED_TOOLS=""
 NUM_WORKERS=1
-WORKER_ID=0             # 0 = main process, 1..N = worker subprocess
+WORKER_ID=0 # 0 = main process, 1..N = worker subprocess
 UI_MODE="full"
 SHOW_LOGO=true
 SHOW_STATUS_LINE=true
 UI_ASCII=false
 ENABLE_NOTIFY=false
-LOG_FORMAT="text"       # text or jsonl
+LOG_FORMAT="text" # text or jsonl
 
 # Save original args for caffeinate re-exec
 ORIGINAL_ARGS=("$@")
@@ -111,18 +111,21 @@ TAIL_PIDS=()
 # -----------------------------------------------------------------------------
 # CLI parsing
 # -----------------------------------------------------------------------------
-_require_arg() { [[ $# -ge 2 ]] || { echo "Error: Option $1 requires an argument" >&2; exit 1; }; }
+_require_arg() { [[ $# -ge 2 ]] || {
+  echo "Error: Option $1 requires an argument" >&2
+  exit 1
+}; }
 _validate_path_arg() {
   local label="$1" path="$2"
-  if [[ -z "$path" ]]; then
+  if [[ -z $path ]]; then
     log_err "$(sanitize_tty_text "${label} path cannot be empty")"
     exit 1
   fi
-  if [[ "$path" == *$'\n'* || "$path" == *$'\r'* ]]; then
+  if [[ $path == *$'\n'* || $path == *$'\r'* ]]; then
     log_err "$(sanitize_tty_text "${label} path contains newline characters")"
     exit 1
   fi
-  if [[ "$path" == -* ]]; then
+  if [[ $path == -* ]]; then
     log_err "$(sanitize_tty_text "${label} path cannot start with '-' (use ./<path> to disambiguate)")"
     exit 1
   fi
@@ -133,22 +136,22 @@ _validate_log_file() {
   local path_safe dir_safe
   path_safe="$(sanitize_tty_text "$path")"
   _validate_path_arg "Log file" "$path"
-  if [[ -e "$path" && ! -f "$path" ]]; then
+  if [[ -e $path && ! -f $path ]]; then
     log_err "Log path exists but is not a regular file: $path_safe"
     exit 1
   fi
   local dir
   dir="$(dirname -- "$path")"
   dir_safe="$(sanitize_tty_text "$dir")"
-  if [[ ! -d "$dir" ]]; then
+  if [[ ! -d $dir ]]; then
     log_err "Log directory does not exist: $dir_safe"
     exit 1
   fi
-  if [[ ! -w "$dir" ]]; then
+  if [[ ! -w $dir ]]; then
     log_err "Log directory is not writable: $dir_safe"
     exit 1
   fi
-  if [[ -e "$path" && ! -w "$path" ]]; then
+  if [[ -e $path && ! -w $path ]]; then
     log_err "Log file is not writable: $path_safe"
     exit 1
   fi
@@ -156,98 +159,207 @@ _validate_log_file() {
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    -p|--prompt)    _require_arg "$@"; PROMPT_FILE="$2"; shift 2 ;;
-    -e|--engine)    _require_arg "$@"; ENGINE="$2"; shift 2 ;;
-    --codex-flags)  _require_arg "$@"; CODEX_EXEC_FLAGS="$2"; shift 2 ;;
-    --codex-flag)   _require_arg "$@"; CODEX_ARGS+=("$2"); shift 2 ;;
-    -m|--max)       _require_arg "$@"; MAX_ITERATIONS="$2"; shift 2 ;;
-    -w|--wait)      _require_arg "$@"; WAIT_TIME="$2"; shift 2 ;;
-    -a|--attempts)  _require_arg "$@"; MAX_ATTEMPTS="$2"; shift 2 ;;
-    -t|--timeout)   _require_arg "$@"; ITERATION_TIMEOUT="$2"; shift 2 ;;
-    --max-tools)    _require_arg "$@"; MAX_TOOL_CALLS="$2"; shift 2 ;;
-    --max-stall)    _require_arg "$@"; MAX_STALL_ITERATIONS="$2"; shift 2 ;;
-    -c|--caffeinate) USE_CAFFEINATE=true; shift ;;
-    -q|--quiet)     QUIET=true; shift ;;
-    --no-iter-quote) SHOW_QUOTE_EACH_ITERATION=false; shift ;;
-    --bell-on-completion) BELL_ON_COMPLETION=true; shift ;;
-    --bell-on-end)  BELL_ON_END=true; shift ;;
-    --no-exit-on-complete) EXIT_ON_COMPLETE=false; shift ;;
-    --no-title)     ENABLE_TITLE=false; shift ;;
-    --no-resources) SHOW_RESOURCES=false; shift ;;
-    --no-wait-countdown) WAIT_COUNTDOWN=false; shift ;;
-    --no-status-line) SHOW_STATUS_LINE=false; shift ;;
-    --no-logo)     SHOW_LOGO=false; shift ;;
-    --ascii)       UI_ASCII=true; shift ;;
-    -j|--workers) _require_arg "$@"; NUM_WORKERS="$2"; shift 2 ;;
-    --allowed-tools) _require_arg "$@"; ALLOWED_TOOLS="$2"; shift 2 ;;
-    --disallowed-tools) _require_arg "$@"; DISALLOWED_TOOLS="$2"; shift 2 ;;
-    --ui) _require_arg "$@"; UI_MODE="$2"; shift 2 ;;
-    --notify)      ENABLE_NOTIFY=true; shift ;;
-    --log-format) _require_arg "$@"; LOG_FORMAT="$2"; shift 2 ;;
-    -l|--log)
-      if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
-        LOG_FILE="$2"; shift 2
+    -p | --prompt)
+      _require_arg "$@"
+      PROMPT_FILE="$2"
+      shift 2
+      ;;
+    -e | --engine)
+      _require_arg "$@"
+      ENGINE="$2"
+      shift 2
+      ;;
+    --codex-flags)
+      _require_arg "$@"
+      CODEX_EXEC_FLAGS="$2"
+      shift 2
+      ;;
+    --codex-flag)
+      _require_arg "$@"
+      CODEX_ARGS+=("$2")
+      shift 2
+      ;;
+    -m | --max)
+      _require_arg "$@"
+      MAX_ITERATIONS="$2"
+      shift 2
+      ;;
+    -w | --wait)
+      _require_arg "$@"
+      WAIT_TIME="$2"
+      shift 2
+      ;;
+    -a | --attempts)
+      _require_arg "$@"
+      MAX_ATTEMPTS="$2"
+      shift 2
+      ;;
+    -t | --timeout)
+      _require_arg "$@"
+      ITERATION_TIMEOUT="$2"
+      shift 2
+      ;;
+    --max-tools)
+      _require_arg "$@"
+      MAX_TOOL_CALLS="$2"
+      shift 2
+      ;;
+    --max-stall)
+      _require_arg "$@"
+      MAX_STALL_ITERATIONS="$2"
+      shift 2
+      ;;
+    -c | --caffeinate)
+      USE_CAFFEINATE=true
+      shift
+      ;;
+    -q | --quiet)
+      QUIET=true
+      shift
+      ;;
+    --no-iter-quote)
+      SHOW_QUOTE_EACH_ITERATION=false
+      shift
+      ;;
+    --bell-on-completion)
+      BELL_ON_COMPLETION=true
+      shift
+      ;;
+    --bell-on-end)
+      BELL_ON_END=true
+      shift
+      ;;
+    --no-exit-on-complete)
+      EXIT_ON_COMPLETE=false
+      shift
+      ;;
+    --no-title)
+      ENABLE_TITLE=false
+      shift
+      ;;
+    --no-resources)
+      SHOW_RESOURCES=false
+      shift
+      ;;
+    --no-wait-countdown)
+      WAIT_COUNTDOWN=false
+      shift
+      ;;
+    --no-status-line)
+      SHOW_STATUS_LINE=false
+      shift
+      ;;
+    --no-logo)
+      SHOW_LOGO=false
+      shift
+      ;;
+    --ascii)
+      UI_ASCII=true
+      shift
+      ;;
+    -j | --workers)
+      _require_arg "$@"
+      NUM_WORKERS="$2"
+      shift 2
+      ;;
+    --allowed-tools)
+      _require_arg "$@"
+      ALLOWED_TOOLS="$2"
+      shift 2
+      ;;
+    --disallowed-tools)
+      _require_arg "$@"
+      DISALLOWED_TOOLS="$2"
+      shift 2
+      ;;
+    --ui)
+      _require_arg "$@"
+      UI_MODE="$2"
+      shift 2
+      ;;
+    --notify)
+      ENABLE_NOTIFY=true
+      shift
+      ;;
+    --log-format)
+      _require_arg "$@"
+      LOG_FORMAT="$2"
+      shift 2
+      ;;
+    -l | --log)
+      if [[ -n ${2:-} && ! $2 =~ ^- ]]; then
+        LOG_FILE="$2"
+        shift 2
       else
-        LOG_FILE="ralph_$(date '+%Y-%m-%d_%H-%M-%S').log"; shift
-      fi ;;
+        LOG_FILE="ralph_$(date '+%Y-%m-%d_%H-%M-%S').log"
+        shift
+      fi
+      ;;
     --clear-attempts)
       init_attempts_file
       clear_attempts
       log_ok "Cleared all attempt tracking. Tasks will be retried."
-      exit 0 ;;
+      exit 0
+      ;;
     --show-attempts)
       init_attempts_file
       show_attempts
-      exit 0 ;;
+      exit 0
+      ;;
     help)
       usage
-      exit 0 ;;
-    -h|--help) usage; exit 0 ;;
+      exit 0
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
     *)
       log_err "Unknown option: $(sanitize_tty_text "$1")"
       echo ""
       usage
-      exit 1 ;;
+      exit 1
+      ;;
   esac
 done
 
 # -----------------------------------------------------------------------------
 # Validate inputs
 # -----------------------------------------------------------------------------
-if [[ "$ENGINE" != "claude" && "$ENGINE" != "codex" ]]; then
+if [[ $ENGINE != "claude" && $ENGINE != "codex" ]]; then
   log_err "Unknown engine: $(sanitize_tty_text "$ENGINE") (must be 'claude' or 'codex')"
   exit 1
 fi
 
-if [[ "$UI_MODE" != "full" && "$UI_MODE" != "compact" && "$UI_MODE" != "minimal" && "$UI_MODE" != "dashboard" ]]; then
+if [[ $UI_MODE != "full" && $UI_MODE != "compact" && $UI_MODE != "minimal" && $UI_MODE != "dashboard" ]]; then
   log_err "Unknown UI mode: $(sanitize_tty_text "$UI_MODE") (must be 'full', 'compact', 'minimal', or 'dashboard')"
   exit 1
 fi
 
-if [[ "$UI_MODE" == "compact" || "$UI_MODE" == "minimal" ]]; then
+if [[ $UI_MODE == "compact" || $UI_MODE == "minimal" ]]; then
   QUIET=true
 fi
 
-if [[ "$LOG_FORMAT" != "text" && "$LOG_FORMAT" != "jsonl" ]]; then
+if [[ $LOG_FORMAT != "text" && $LOG_FORMAT != "jsonl" ]]; then
   log_err "Unknown log format: $(sanitize_tty_text "$LOG_FORMAT") (must be 'text' or 'jsonl')"
   exit 1
 fi
 
 for _numvar_name in MAX_ITERATIONS WAIT_TIME MAX_ATTEMPTS ITERATION_TIMEOUT MAX_TOOL_CALLS MAX_STALL_ITERATIONS NUM_WORKERS; do
   _numvar_val="${!_numvar_name}"
-  if ! [[ "$_numvar_val" =~ ^[0-9]+$ ]]; then
+  if ! [[ $_numvar_val =~ ^[0-9]+$ ]]; then
     log_err "${_numvar_name} must be a non-negative integer, got: $(sanitize_tty_text "$_numvar_val")"
     exit 1
   fi
 done
 
-if [[ "$NUM_WORKERS" -lt 1 || "$NUM_WORKERS" -gt 16 ]]; then
+if [[ $NUM_WORKERS -lt 1 || $NUM_WORKERS -gt 16 ]]; then
   log_err "Workers must be 1-16, got: $(sanitize_tty_text "$NUM_WORKERS")"
   exit 1
 fi
 
 _validate_path_arg "Prompt file" "$PROMPT_FILE"
-if [[ -n "$LOG_FILE" ]]; then
+if [[ -n $LOG_FILE ]]; then
   _validate_log_file "$LOG_FILE"
 fi
 
@@ -257,7 +369,7 @@ setup_dashboard
 # -----------------------------------------------------------------------------
 # Caffeinate: re-exec under caffeinate if requested
 # -----------------------------------------------------------------------------
-if [[ "$USE_CAFFEINATE" == true && -z "${RALPH_CAFFEINATED:-}" ]]; then
+if [[ $USE_CAFFEINATE == true && -z ${RALPH_CAFFEINATED:-} ]]; then
   if ! command -v caffeinate >/dev/null 2>&1; then
     log_err "caffeinate not found (only available on macOS)"
     exit 1
@@ -266,7 +378,7 @@ if [[ "$USE_CAFFEINATE" == true && -z "${RALPH_CAFFEINATED:-}" ]]; then
   export RALPH_CAFFEINATED=1
   filtered_args=()
   for arg in "${ORIGINAL_ARGS[@]}"; do
-    [[ "$arg" != "-c" && "$arg" != "--caffeinate" ]] && filtered_args+=("$arg")
+    [[ $arg != "-c" && $arg != "--caffeinate" ]] && filtered_args+=("$arg")
   done
   exec caffeinate -i "$RALPH_REAL_PATH" "${filtered_args[@]}"
 fi
@@ -276,7 +388,7 @@ fi
 # -----------------------------------------------------------------------------
 check_dependencies
 
-if [[ ! -f "$PROMPT_FILE" ]]; then
+if [[ ! -f $PROMPT_FILE ]]; then
   log_err "Prompt file '$(sanitize_tty_text "$PROMPT_FILE")' not found"
   echo ""
   cat <<EOF
@@ -288,7 +400,7 @@ Create a RALPH_TASK.md with your task instructions, for example:
 EOF
   exit 1
 fi
-if [[ ! -r "$PROMPT_FILE" ]]; then
+if [[ ! -r $PROMPT_FILE ]]; then
   log_err "Prompt file '$(sanitize_tty_text "$PROMPT_FILE")' is not readable"
   exit 1
 fi
@@ -305,13 +417,13 @@ print_header() {
 
   set_smart_title "starting" "" "0" "0" ""
 
-  if [[ "$UI_MODE" == "minimal" ]]; then
+  if [[ $UI_MODE == "minimal" ]]; then
     return 0
   fi
 
-  if [[ "$SHOW_LOGO" == "true" ]]; then
+  if [[ $SHOW_LOGO == "true" ]]; then
     printf "%b\n" "${BLUE}"
-    cat << "LOGO"
+    cat <<"LOGO"
    ██████╗  █████╗ ██╗     ██████╗ ██╗  ██╗
    ██╔══██╗██╔══██╗██║     ██╔══██╗██║  ██║
    ██████╔╝███████║██║     ██████╔╝███████║
@@ -344,7 +456,7 @@ print_header
 # -----------------------------------------------------------------------------
 # Config panel
 # -----------------------------------------------------------------------------
-if [[ "$UI_MODE" != "minimal" ]]; then
+if [[ $UI_MODE != "minimal" ]]; then
   box_title "Config"
 
   max_iter_display="$([[ $MAX_ITERATIONS -eq 0 ]] && echo "unlimited" || echo "${MAX_ITERATIONS}")"
@@ -353,65 +465,65 @@ if [[ "$UI_MODE" != "minimal" ]]; then
 
   skipped_list="$(get_skipped_tasks || true)"
   skipped_count=0
-  if [[ -n "$skipped_list" ]]; then
+  if [[ -n $skipped_list ]]; then
     skipped_count="$(printf "%s\n" "$skipped_list" | wc -l | tr -d ' ')"
   fi
 
   engine_display="$(printf "%s" "$ENGINE" | tr '[:lower:]' '[:upper:]')"
-  if [[ "$ENGINE" == "codex" ]]; then
+  if [[ $ENGINE == "codex" ]]; then
     engine_display="${engine_display} (flags: $(sanitize_tty_text "$CODEX_EXEC_FLAGS"))"
   fi
 
   prompt_safe="$(sanitize_tty_text "$PROMPT_FILE")"
   log_safe="$(sanitize_tty_text "$LOG_FILE")"
 
-  if [[ "$NUM_WORKERS" -gt 1 ]]; then
+  if [[ $NUM_WORKERS -gt 1 ]]; then
     printf "  %-16s %b\n" "Workers:" "${YELLOW}${NUM_WORKERS} parallel${NC}"
   else
     printf "  %-16s %b\n" "Workers:" "${DIM}1 (sequential)${NC}"
   fi
-  printf "  %-16s %b\n" "Engine:"     "${CYAN}${engine_display}${NC}"
-  printf "  %-16s %b\n" "Prompt:"     "${GREEN}${prompt_safe}${NC}"
+  printf "  %-16s %b\n" "Engine:" "${CYAN}${engine_display}${NC}"
+  printf "  %-16s %b\n" "Prompt:" "${GREEN}${prompt_safe}${NC}"
   printf "  %-16s %b\n" "Iterations:" "${YELLOW}${max_iter_display}${NC}"
-  printf "  %-16s %b\n" "Wait:"       "${YELLOW}${wait_display}${NC}"
-  printf "  %-16s %b\n" "Attempts:"   "${YELLOW}${MAX_ATTEMPTS}${NC}"
-  printf "  %-16s %b\n" "Timeout:"    "${YELLOW}${timeout_display}${NC}"
-  printf "  %-16s %b\n" "Max tools:"  "${YELLOW}${MAX_TOOL_CALLS}${NC}"
-  if [[ "$MAX_STALL_ITERATIONS" -gt 0 ]]; then
-    printf "  %-16s %b\n" "Max stall:"  "${YELLOW}${MAX_STALL_ITERATIONS}${NC}"
+  printf "  %-16s %b\n" "Wait:" "${YELLOW}${wait_display}${NC}"
+  printf "  %-16s %b\n" "Attempts:" "${YELLOW}${MAX_ATTEMPTS}${NC}"
+  printf "  %-16s %b\n" "Timeout:" "${YELLOW}${timeout_display}${NC}"
+  printf "  %-16s %b\n" "Max tools:" "${YELLOW}${MAX_TOOL_CALLS}${NC}"
+  if [[ $MAX_STALL_ITERATIONS -gt 0 ]]; then
+    printf "  %-16s %b\n" "Max stall:" "${YELLOW}${MAX_STALL_ITERATIONS}${NC}"
   else
-    printf "  %-16s %b\n" "Max stall:"  "${DIM}disabled${NC}"
+    printf "  %-16s %b\n" "Max stall:" "${DIM}disabled${NC}"
   fi
-  printf "  %-16s %b\n" "UI:"         "${CYAN}${UI_MODE}${NC}"
-  printf "  %-16s %b\n" "Exit on done:"  "$([[ "$EXIT_ON_COMPLETE" == "true" ]] && echo "${GREEN}yes${NC}" || echo "${YELLOW}no (loop forever)${NC}")"
+  printf "  %-16s %b\n" "UI:" "${CYAN}${UI_MODE}${NC}"
+  printf "  %-16s %b\n" "Exit on done:" "$([[ $EXIT_ON_COMPLETE == "true" ]] && echo "${GREEN}yes${NC}" || echo "${YELLOW}no (loop forever)${NC}")"
 
-  if [[ -n "$LOG_FILE" ]]; then
-    printf "  %-16s %b\n" "Log:"        "${GREEN}${log_safe}${NC} ${DIM}(${LOG_FORMAT})${NC}"
+  if [[ -n $LOG_FILE ]]; then
+    printf "  %-16s %b\n" "Log:" "${GREEN}${log_safe}${NC} ${DIM}(${LOG_FORMAT})${NC}"
   else
-    printf "  %-16s %b\n" "Log:"        "${DIM}(disabled)${NC}"
-  fi
-
-  if [[ "$ENABLE_NOTIFY" == "true" ]]; then
-    printf "  %-16s %b\n" "Notify:"     "${GREEN}enabled${NC}"
+    printf "  %-16s %b\n" "Log:" "${DIM}(disabled)${NC}"
   fi
 
-  if [[ "$skipped_count" -gt 0 ]]; then
-    printf "  %-16s %b\n" "Skipped:"    "${RED}${skipped_count}${NC} ${DIM}(use --show-attempts)${NC}"
+  if [[ $ENABLE_NOTIFY == "true" ]]; then
+    printf "  %-16s %b\n" "Notify:" "${GREEN}enabled${NC}"
+  fi
+
+  if [[ $skipped_count -gt 0 ]]; then
+    printf "  %-16s %b\n" "Skipped:" "${RED}${skipped_count}${NC} ${DIM}(use --show-attempts)${NC}"
   else
-    printf "  %-16s %b\n" "Skipped:"    "${GREEN}0${NC}"
+    printf "  %-16s %b\n" "Skipped:" "${GREEN}0${NC}"
   fi
 
   echo ""
-  if [[ "$UI_MODE" == "dashboard" ]]; then
+  if [[ $UI_MODE == "dashboard" ]]; then
     log_dim "Tip: q:quit s:skip p:pause | Dashboard mode active"
   else
     log_dim "Tip: q:quit s:skip p:pause during countdown | Ctrl+C to stop anytime"
   fi
 fi
 
-if [[ "$UI_MODE" != "minimal" ]]; then
+if [[ $UI_MODE != "minimal" ]]; then
   echo ""
-  if [[ "$QUIET" == "false" ]]; then
+  if [[ $QUIET == "false" ]]; then
     sleep 1
   fi
 fi
@@ -444,14 +556,14 @@ cleanup() {
   # Prevent re-entry and protect ourselves from group signals
   trap '' INT TERM
 
-  tput cnorm 2>/dev/null || true  # ensure cursor is visible
+  tput cnorm 2>/dev/null || true # ensure cursor is visible
   cleanup_dashboard
   clear_iterm_badge
   echo ""
   log_warn "Caught interrupt signal, shutting down..."
   set_smart_title "stopping" "" "$COMPLETED_COUNT" "$FAILED_COUNT" ""
 
-  if [[ "$NUM_WORKERS" -gt 1 ]]; then
+  if [[ $NUM_WORKERS -gt 1 ]]; then
     # Signal workers to stop via sentinel
     signal_exit
     # Kill tail processes and their pipeline children (tail -f survives plain kill)
@@ -465,13 +577,13 @@ cleanup() {
     # Wait for workers to actually terminate
     for pid in "${WORKER_PIDS[@]}"; do
       local wait_count=0
-      while kill -0 "$pid" 2>/dev/null && [[ "$wait_count" -lt 50 ]]; do
+      while kill -0 "$pid" 2>/dev/null && [[ $wait_count -lt 50 ]]; do
         sleep 0.1
         wait_count=$((wait_count + 1))
       done
     done
     # Aggregate counters from all workers
-    if [[ -n "${WORKER_STATE_DIR:-}" && -d "${WORKER_STATE_DIR:-}" ]]; then
+    if [[ -n ${WORKER_STATE_DIR:-} && -d ${WORKER_STATE_DIR:-} ]]; then
       local totals
       totals="$(read_all_counters)"
       COMPLETED_COUNT="$(echo "$totals" | awk '{print $1}')"
@@ -480,7 +592,7 @@ cleanup() {
     fi
   else
     # Kill engine and its entire process tree (codex/claude, perl timeout, tee, jq)
-    if [[ -n "${CLAUDE_PID:-}" ]]; then
+    if [[ -n ${CLAUDE_PID:-} ]]; then
       _kill_tree "$CLAUDE_PID" INT
       sleep 0.3
       _kill_tree "$CLAUDE_PID" TERM
@@ -491,7 +603,7 @@ cleanup() {
   # pgrep -P (tree walking) misses reparented orphans; process-group kill catches them.
   local pgid
   pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
-  if [[ -n "$pgid" && "$pgid" != "0" ]]; then
+  if [[ -n $pgid && $pgid != "0" ]]; then
     kill -INT -- -"$pgid" 2>/dev/null || true
     sleep 0.2
     kill -TERM -- -"$pgid" 2>/dev/null || true
@@ -515,7 +627,7 @@ cleanup() {
   bell end
 
   # Cleanup worker state dir
-  if [[ -n "${WORKER_STATE_DIR:-}" && -d "${WORKER_STATE_DIR:-}" ]]; then
+  if [[ -n ${WORKER_STATE_DIR:-} && -d ${WORKER_STATE_DIR:-} ]]; then
     rm -rf "$WORKER_STATE_DIR" 2>/dev/null || true
   fi
 
@@ -530,7 +642,7 @@ trap : WINCH
 # -----------------------------------------------------------------------------
 # Run
 # -----------------------------------------------------------------------------
-if [[ "$NUM_WORKERS" -gt 1 ]]; then
+if [[ $NUM_WORKERS -gt 1 ]]; then
   run_parallel "$PROMPT_FILE"
 else
   run_loop "$PROMPT_FILE"

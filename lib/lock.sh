@@ -9,7 +9,7 @@ _LOCK_MAX_RETRIES_DEFAULT=3
 
 _lock_int_or_default() {
   local value="$1" fallback="$2"
-  if [[ -n "$value" && "$value" =~ ^[0-9]+$ ]]; then
+  if [[ -n $value && $value =~ ^[0-9]+$ ]]; then
     printf "%s" "$value"
   else
     printf "%s" "$fallback"
@@ -22,16 +22,16 @@ _lock_pid_path() {
 
 _lock_write_pid() {
   local lockdir="$1"
-  printf "%s\n" "$$" > "$(_lock_pid_path "$lockdir")" 2>/dev/null
+  printf "%s\n" "$$" >"$(_lock_pid_path "$lockdir")" 2>/dev/null
 }
 
 _lock_read_pid() {
   local lockdir="$1"
   local pidfile pid
   pidfile="$(_lock_pid_path "$lockdir")"
-  [[ -r "$pidfile" ]] || return 1
-  read -r pid < "$pidfile" || return 1
-  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  [[ -r $pidfile ]] || return 1
+  read -r pid <"$pidfile" || return 1
+  [[ $pid =~ ^[0-9]+$ ]] || return 1
   printf "%s" "$pid"
 }
 
@@ -52,7 +52,7 @@ _lock_cleanup_dir() {
 }
 
 _detect_sleep_interval() {
-  if [[ -n "$_LOCK_SLEEP_INTERVAL" ]]; then return; fi
+  if [[ -n $_LOCK_SLEEP_INTERVAL ]]; then return; fi
   if sleep 0.05 2>/dev/null; then
     _LOCK_SLEEP_INTERVAL=0.05
   else
@@ -62,7 +62,7 @@ _detect_sleep_interval() {
 
 acquire_lock() {
   local lockdir="$1"
-  if [[ -z "$lockdir" ]]; then
+  if [[ -z $lockdir ]]; then
     log_err "Lock path is empty"
     return 1
   fi
@@ -77,10 +77,10 @@ acquire_lock() {
   _detect_sleep_interval
   local sleep_interval="$_LOCK_SLEEP_INTERVAL"
   local max_iterations
-  if [[ "$sleep_interval" == "0.05" ]]; then
-    max_iterations=$((max_wait * 20))  # 1/0.05
+  if [[ $sleep_interval == "0.05" ]]; then
+    max_iterations=$((max_wait * 20)) # 1/0.05
   else
-    max_iterations=$max_wait  # 1 iteration per second
+    max_iterations=$max_wait # 1 iteration per second
   fi
 
   while true; do
@@ -93,11 +93,11 @@ acquire_lock() {
       return 0
     fi
 
-    if [[ -L "$lockdir" ]]; then
+    if [[ -L $lockdir ]]; then
       log_err "Lock path is a symlink: $lockdir"
       return 1
     fi
-    if [[ -e "$lockdir" && ! -d "$lockdir" ]]; then
+    if [[ -e $lockdir && ! -d $lockdir ]]; then
       log_err "Lock path exists but is not a directory: $lockdir"
       return 1
     fi
@@ -105,10 +105,10 @@ acquire_lock() {
     sleep "$sleep_interval"
     waited=$((waited + 1))
 
-    if [[ "$waited" -ge "$max_iterations" ]]; then
-      if [[ -d "$lockdir" ]]; then
+    if [[ $waited -ge $max_iterations ]]; then
+      if [[ -d $lockdir ]]; then
         if _lock_is_stale "$lockdir"; then
-          if [[ "$retries" -ge "$max_retries" ]]; then
+          if [[ $retries -ge $max_retries ]]; then
             log_err "Failed to acquire lock after $max_retries retries: $lockdir"
             return 1
           fi
@@ -131,7 +131,7 @@ acquire_lock() {
           return 1
         fi
       else
-        if [[ "$retries" -ge "$max_retries" ]]; then
+        if [[ $retries -ge $max_retries ]]; then
           log_err "Failed to acquire lock after $max_retries retries: $lockdir"
           return 1
         fi
@@ -145,11 +145,11 @@ acquire_lock() {
 
 release_lock() {
   local lockdir="$1"
-  if [[ -z "$lockdir" ]]; then
+  if [[ -z $lockdir ]]; then
     log_err "Lock path is empty"
     return 1
   fi
-  if [[ -L "$lockdir" ]]; then
+  if [[ -L $lockdir ]]; then
     log_warn "Lock path is a symlink, refusing to remove: $lockdir"
     return 0
   fi

@@ -9,9 +9,9 @@ fmt_hms() {
   local h=$((s / 3600))
   local m=$(((s % 3600) / 60))
   local sec=$((s % 60))
-  if [[ "$h" -gt 0 ]]; then
+  if [[ $h -gt 0 ]]; then
     printf "%dh%02dm%02ds" "$h" "$m" "$sec"
-  elif [[ "$m" -gt 0 ]]; then
+  elif [[ $m -gt 0 ]]; then
     printf "%dm%02ds" "$m" "$sec"
   else
     printf "%ds" "$sec"
@@ -29,9 +29,9 @@ bell() {
   local event="${1:-}"
   is_tty || return 0
   case "$event" in
-    completion) [[ "${BELL_ON_COMPLETION:-false}" == "true" ]] && printf "\a" ;;
-    end)        [[ "${BELL_ON_END:-false}" == "true" ]] && printf "\a" ;;
-    *)          ;; # ignore unknown
+    completion) [[ ${BELL_ON_COMPLETION:-false} == "true" ]] && printf "\a" ;;
+    end) [[ ${BELL_ON_END:-false} == "true" ]] && printf "\a" ;;
+    *) ;; # ignore unknown
   esac
 }
 
@@ -39,7 +39,8 @@ bell() {
 # Uses gtimeout/timeout if available, otherwise perl fork+exec.
 # Returns 124 on timeout (matching GNU timeout behavior).
 run_with_timeout() {
-  local seconds="$1"; shift
+  local seconds="$1"
+  shift
   if command -v gtimeout >/dev/null 2>&1; then
     gtimeout "${seconds}" -- "$@"
     return $?
@@ -106,12 +107,21 @@ task_hash() {
 # Git state hash to detect file changes (portable macOS/Linux)
 # Returns empty string on failure (safe for set -e)
 get_file_state_hash() {
-  command -v git >/dev/null 2>&1 || { echo ""; return 0; }
+  command -v git >/dev/null 2>&1 || {
+    echo ""
+    return 0
+  }
   local repo_root
-  repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo ""; return 0; }
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+    echo ""
+    return 0
+  }
   case "$PWD/" in
     "$repo_root"/*) ;;
-    *) echo ""; return 0 ;;
+    *)
+      echo ""
+      return 0
+      ;;
   esac
   if command -v md5sum >/dev/null 2>&1; then
     git status --porcelain 2>/dev/null | md5sum 2>/dev/null | cut -c1-8 || echo ""
@@ -141,20 +151,20 @@ check_dependencies() {
 
 # Show resource usage (best-effort)
 show_resources() {
-  [[ "${SHOW_RESOURCES:-true}" == "true" ]] || return 0
+  [[ ${SHOW_RESOURCES:-true} == "true" ]] || return 0
   command -v docker >/dev/null 2>&1 || return 0
 
   local pattern="${RALPH_DOCKER_PATTERN:-}"
-  [[ -z "$pattern" ]] && return 0
+  [[ -z $pattern ]] && return 0
 
   local docker_stats
   docker_stats="$(docker stats --no-stream --format "{{.Name}}: CPU={{.CPUPerc}} MEM={{.MemUsage}}" 2>/dev/null \
     | grep -E -- "$pattern" | head -3 || true)"
-  if [[ -n "$docker_stats" ]]; then
+  if [[ -n $docker_stats ]]; then
     log_info "Resources"
     while IFS= read -r line; do
       printf "  %s\n" "$line"
-    done <<< "$docker_stats"
+    done <<<"$docker_stats"
   fi
 }
 
@@ -197,7 +207,7 @@ generate_run_id() {
   if command -v shasum >/dev/null 2>&1; then
     suffix="$(printf "%s" "$epoch" | shasum -a 256 | cut -c1-4)"
   else
-    suffix="$(( epoch % 10000 ))"
+    suffix="$((epoch % 10000))"
   fi
   printf "%s-%s" "$t" "$suffix"
 }

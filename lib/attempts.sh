@@ -5,34 +5,51 @@
 # Usage: _atomic_update_attempts <jq_filter> [jq_args...]
 # Pass an empty filter "" to skip the jq step (used by init/clear to just ensure file exists).
 _atomic_update_attempts() {
-  local jq_filter="$1"; shift
+  local jq_filter="$1"
+  shift
   local lock_name="${ATTEMPTS_FILE}.lck"
-  acquire_lock "$lock_name" || { log_err "Could not acquire lock for attempts"; return 1; }
-  if [[ ! -f "$ATTEMPTS_FILE" ]]; then
+  acquire_lock "$lock_name" || {
+    log_err "Could not acquire lock for attempts"
+    return 1
+  }
+  if [[ ! -f $ATTEMPTS_FILE ]]; then
     local init_tmp
-    init_tmp="$(mktemp "${TMPDIR:-/tmp}/ralph_attempts.XXXXXX")" || { log_err "Failed to create temp file for attempts"; release_lock "$lock_name"; return 1; }
-    printf "%s\n" "{}" > "$init_tmp"
+    init_tmp="$(mktemp "${TMPDIR:-/tmp}/ralph_attempts.XXXXXX")" || {
+      log_err "Failed to create temp file for attempts"
+      release_lock "$lock_name"
+      return 1
+    }
+    printf "%s\n" "{}" >"$init_tmp"
     if ! mv "$init_tmp" "$ATTEMPTS_FILE"; then
-      rm -f "$init_tmp"; release_lock "$lock_name"
-      log_err "Failed to initialize attempts file: $ATTEMPTS_FILE"; return 1
+      rm -f "$init_tmp"
+      release_lock "$lock_name"
+      log_err "Failed to initialize attempts file: $ATTEMPTS_FILE"
+      return 1
     fi
   fi
-  if [[ -n "$jq_filter" ]]; then
+  if [[ -n $jq_filter ]]; then
     local tmp_file
-    tmp_file="$(mktemp "${TMPDIR:-/tmp}/ralph_attempts.XXXXXX")" || { log_err "Failed to create temp file for attempts"; release_lock "$lock_name"; return 1; }
-    if jq "$jq_filter" "$@" "$ATTEMPTS_FILE" > "$tmp_file"; then
+    tmp_file="$(mktemp "${TMPDIR:-/tmp}/ralph_attempts.XXXXXX")" || {
+      log_err "Failed to create temp file for attempts"
+      release_lock "$lock_name"
+      return 1
+    }
+    if jq "$jq_filter" "$@" "$ATTEMPTS_FILE" >"$tmp_file"; then
       if mv "$tmp_file" "$ATTEMPTS_FILE"; then
-        release_lock "$lock_name"; return 0
+        release_lock "$lock_name"
+        return 0
       fi
     fi
-    rm -f "$tmp_file"; release_lock "$lock_name"
-    log_err "Failed to update attempts file: $ATTEMPTS_FILE"; return 1
+    rm -f "$tmp_file"
+    release_lock "$lock_name"
+    log_err "Failed to update attempts file: $ATTEMPTS_FILE"
+    return 1
   fi
   release_lock "$lock_name"
 }
 
 init_attempts_file() {
-  [[ -f "${ATTEMPTS_FILE:-}" ]] && return 0
+  [[ -f ${ATTEMPTS_FILE:-} ]] && return 0
   _atomic_update_attempts ""
 }
 
@@ -93,7 +110,7 @@ get_skipped_tasks() {
 show_attempts() {
   log_info "Current attempt tracking state"
   echo ""
-  if [[ ! -s "$ATTEMPTS_FILE" ]]; then
+  if [[ ! -s $ATTEMPTS_FILE ]]; then
     echo "No attempts tracked yet."
     return 0
   fi
