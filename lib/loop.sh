@@ -315,7 +315,9 @@ _run_parallel_dashboard() {
       skipped_now="$(get_skipped_tasks 2>/dev/null | wc -l | tr -d ' ')"
       run_elapsed=$(($(date '+%s') - STARTED_EPOCH))
 
-      write_dashboard_state "$dash_iterations" "RUNNING" "" \
+      # dash_iterations is the count of *completed* iterations; add 1 so the
+      # dashboard shows the current in-progress iteration number.
+      write_dashboard_state "$((dash_iterations + 1))" "RUNNING" "" \
         "$dash_completed" "$dash_failed" "$skipped_now" \
         "0" "$ITERATION_TIMEOUT" "0" "$MAX_TOOL_CALLS" "" "$run_elapsed"
       render_dashboard "" "" 0
