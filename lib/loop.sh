@@ -100,16 +100,16 @@ run_worker() {
   while true; do
     # Check if another worker signaled all tasks complete
     if should_exit; then
-      echo "[W${worker_id}] Exit sentinel detected, stopping."
+      printf '%s\n' "[W${worker_id}] Exit sentinel detected, stopping."
       break
     fi
 
     if [[ $MAX_ITERATIONS -gt 0 && $iteration -gt $MAX_ITERATIONS ]]; then
-      echo "[W${worker_id}] Max iterations (${MAX_ITERATIONS}) reached."
+      printf '%s\n' "[W${worker_id}] Max iterations (${MAX_ITERATIONS}) reached."
       break
     fi
 
-    echo "[W${worker_id}] Starting iteration ${iteration}"
+    printf '%s\n' "[W${worker_id}] Starting iteration ${iteration}"
     local rc=0
     run_iteration "$iteration" "$prompt_file" || rc=$?
 
@@ -118,7 +118,7 @@ run_worker() {
 
     # EXIT_SIGNAL detected (return code 99)
     if [[ $rc -eq 99 ]]; then
-      echo "[W${worker_id}] EXIT_SIGNAL - all tasks complete."
+      printf '%s\n' "[W${worker_id}] EXIT_SIGNAL - all tasks complete."
       break
     fi
 
@@ -130,7 +130,7 @@ run_worker() {
     sleep "$WAIT_TIME"
   done
 
-  echo "[W${worker_id}] Worker finished. Completed=${COMPLETED_COUNT} Failed=${FAILED_COUNT} Iterations=${ITERATION_COUNT}"
+  printf '%s\n' "[W${worker_id}] Worker finished. Completed=${COMPLETED_COUNT} Failed=${FAILED_COUNT} Iterations=${ITERATION_COUNT}"
   write_worker_counters "$worker_id"
 }
 
