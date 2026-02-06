@@ -106,6 +106,7 @@ EOF
 # --- missing prompt file ---
 
 @test "ralph: exits with error when prompt file missing" {
+  command -v claude >/dev/null 2>&1 || skip "claude not installed"
   run "${RALPH_ROOT}/bin/ralph" --prompt "${TEST_TMPDIR}/nonexistent-file.md"
   assert_failure
   assert_output --partial "not found"
