@@ -4,6 +4,32 @@
 setup()    { load 'test_helper/common-setup'; _common_setup; }
 teardown() { _common_teardown; }
 
+# --- is_tty ---
+
+@test "is_tty: returns false when stdout is not a tty" {
+  if [[ -t 1 ]]; then
+    skip "stdout is a tty in this environment"
+  fi
+  run is_tty
+  assert_failure
+}
+
+# --- set_title ---
+
+@test "set_title: no output when disabled" {
+  ENABLE_TITLE=false run set_title "hello"
+  assert_success
+  assert_output ""
+}
+
+# --- bell ---
+
+@test "bell: no output for unknown event" {
+  run bell "mystery"
+  assert_success
+  assert_output ""
+}
+
 # --- fmt_hms ---
 
 @test "fmt_hms: formats seconds only" {
@@ -121,6 +147,32 @@ teardown() { _common_teardown; }
   [[ "$id" == *-* ]]
 }
 
+# --- get_file_state_hash ---
+
+@test "get_file_state_hash: returns empty outside git repo" {
+  local tmp
+  tmp="$(mktemp -d)"
+  pushd "$tmp" >/dev/null
+  run get_file_state_hash
+  popd >/dev/null
+  rm -rf "$tmp"
+  assert_output ""
+}
+
+@test "get_file_state_hash: returns 8-char hex inside repo" {
+  command -v git >/dev/null 2>&1 || skip "git not available"
+  git -C "$RALPH_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || skip "not a git repo"
+  if ! command -v md5sum >/dev/null 2>&1 && ! command -v md5 >/dev/null 2>&1; then
+    skip "no md5 tool available"
+  fi
+
+  pushd "$RALPH_ROOT" >/dev/null
+  run get_file_state_hash
+  popd >/dev/null
+  assert_success
+  [[ "$output" =~ ^[0-9a-fA-F]{8}$ ]]
+}
+
 # --- truncate_ellipsis ---
 
 @test "truncate_ellipsis: returns empty for empty input" {
@@ -142,4 +194,103 @@ teardown() { _common_teardown; }
   local result
   result="$(truncate_ellipsis "hello world" 6)"
   assert_equal "${#result}" 6
+}
+
+@test "truncate_ellipsis: ANSI-aware — short colored string passes through" {
+  # With NO_COLOR the vars are empty, so use raw escapes
+  local colored=$'\033[0;31mhi\033[0m'
+  run truncate_ellipsis "$colored" 10
+  assert_output "$colored"
+}
+
+@test "truncate_ellipsis: ANSI-aware — truncates by visual width" {
+  local colored=$'\033[0;31mhello world\033[0m'
+  local result
+  result="$(truncate_ellipsis "$colored" 6)"
+  # Should strip ANSI and truncate to 5 chars + ellipsis = 6 visual chars
+  assert_equal "${#result}" 6
+}
+
+# --- strip_ansi ---
+
+@test "strip_ansi: strips color codes" {
+  local colored=$'\033[0;31mhello\033[0m'
+  run strip_ansi "$colored"
+  assert_output "hello"
+}
+
+@test "strip_ansi: passes plain text through" {
+  run strip_ansi "plain text"
+  assert_output "plain text"
+}
+
+# --- check_dependencies ---
+
+@test "check_dependencies: errors when engine missing" {
+  if command -v "definitely-missing-command" >/dev/null 2>&1; then
+    skip "unexpected command exists in PATH"
+  fi
+  ENGINE="definitely-missing-command" run check_dependencies
+  assert_failure 1
+  assert_output --partial "Missing required dependencies"
+}
+
+@test "check_dependencies: succeeds when deps present" {
+  command -v jq >/dev/null 2>&1 || skip "jq not available"
+  command -v sh >/dev/null 2>&1 || skip "sh not available"
+  ENGINE="sh" run check_dependencies
+  assert_success
+}
+
+# --- show_resources ---
+
+@test "show_resources: no output when disabled" {
+  SHOW_RESOURCES=false run show_resources
+  assert_success
+  assert_output ""
+}
+
+# --- usage ---
+
+@test "usage: prints usage text" {
+  run usage
+  assert_success
+  assert_output --partial "Usage: ralph"
+  assert_output --partial "--engine"
+}
+
+@test "strip_ansi: handles empty string" {
+  run strip_ansi ""
+  assert_output ""
+}
+
+@test "strip_ansi: strips bold + color + dim" {
+  local s=$'\033[1m\033[36mtest\033[0m\033[2m dim\033[0m'
+  run strip_ansi "$s"
+  assert_output "test dim"
+}
+
+# --- visual_length ---
+
+@test "visual_length: plain text" {
+  run visual_length "hello"
+  assert_output "5"
+}
+
+@test "visual_length: empty string" {
+  run visual_length ""
+  assert_output "0"
+}
+
+@test "visual_length: ignores ANSI codes" {
+  local colored=$'\033[0;31mhello\033[0m'
+  run visual_length "$colored"
+  assert_output "5"
+}
+
+@test "visual_length: complex ANSI" {
+  # Visual: "#1 | task | OK" = 14 chars
+  local s=$'\033[1m\033[36m#1\033[0m | \033[1;37mtask\033[0m | \033[0;32mOK\033[0m'
+  run visual_length "$s"
+  assert_output "14"
 }

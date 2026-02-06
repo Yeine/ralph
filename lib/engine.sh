@@ -47,40 +47,48 @@ run_engine() {
 
   (
     set +e
+    # Ensure pipeline processes are killed when this subshell exits
+    _engine_self="$(sh -c 'echo $PPID')"
+    trap 'pkill -P "$_engine_self" 2>/dev/null; exit' INT TERM
 
     # Helper: display + capture a line of output
     _process_line() {
       local line="$1"
+      local safe_line
+      safe_line="$(sanitize_tty_text "$line")"
       if [[ "$quiet" == "false" ]]; then
+        # Clear any in-place status line before printing engine output
+        clear_status_line
         if [[ "$line" == ">>> "* ]]; then
-          case "$line" in
-            ">>> Read:"*)  printf "%b\n" "${CYAN}${line}${NC}" ;;
-            ">>> Edit:"*)  printf "%b\n" "${YELLOW}${line}${NC}" ;;
-            ">>> Write:"*) printf "%b\n" "${GREEN}${line}${NC}" ;;
-            ">>> Bash:"*)  printf "%b\n" "${MAGENTA}${line}${NC}" ;;
-            *)             printf "%b\n" "${DIM}${line}${NC}" ;;
-          esac
+          # Tool-call announcements: compact dim format
+          printf "%b\n" "${DIM}${safe_line}${NC}"
         elif [[ "$line" == "PICKING:"* ]]; then
-          printf "%b\n" "${BOLD}${ORANGE}${line}${NC}"
+          printf "%b\n" "${BOLD}${ORANGE}${safe_line}${NC}"
         elif [[ "$line" == "DONE:"* || "$line" == "MARKING"* ]]; then
-          printf "%b\n" "${BOLD}${GREEN}${line}${NC}"
-        else
-          printf "%s\n" "$line"
+          printf "%b\n" "${BOLD}${GREEN}${safe_line}${NC}"
+        elif [[ "$line" == "ATTEMPT_FAILED:"* ]]; then
+          printf "%b\n" "${BOLD}${RED}${safe_line}${NC}"
+        elif [[ "$line" == "EXIT_SIGNAL:"* ]]; then
+          printf "%b\n" "${BOLD}${CYAN}${safe_line}${NC}"
         fi
       fi
 
-      if echo "$line" | grep -qiE "^(PICKING|WRITING|TESTING|PASSED|MARKING|DONE|REMAINING|EXIT_SIGNAL|ATTEMPT_FAILED|>>> )"; then
-        echo "$line" >> "$output_file"
-        [[ -n "$log_file" ]] && echo "$line" >> "$log_file"
+      if printf '%s\n' "$line" | grep -qiE "^(PICKING|WRITING|TESTING|PASSED|MARKING|DONE|REMAINING|EXIT_SIGNAL|ATTEMPT_FAILED|>>> )"; then
+        printf '%s\n' "$line" >> "$output_file"
+        [[ -n "$log_file" ]] && printf '%s\n' "$safe_line" >> "$log_file"
       fi
     }
 
     if [[ "$engine" == "codex" ]]; then
+      local -a codex_args=()
+      if [[ -n "$codex_flags" ]]; then
+        # Split on whitespace to avoid eval and command injection.
+        read -r -a codex_args <<< "$codex_flags"
+      fi
       # Codex path: JSONL output via --json, parsed with jq
-      # shellcheck disable=SC2086
       printf '%s' "$prompt_content" \
       | run_with_timeout "$timeout_seconds" \
-          codex exec $codex_flags --json - \
+          codex exec "${codex_args[@]}" --json - \
           2>/dev/null \
       | tee "$raw_jsonl" \
       | jq -r --unbuffered '

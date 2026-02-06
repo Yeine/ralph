@@ -10,13 +10,23 @@ run_loop() {
   local iteration=1
 
   while true; do
+    # Check if quit was requested via keyboard shortcut
+    if [[ "${QUIT_REQUESTED:-false}" == "true" ]]; then
+      echo ""
+      hr_green
+      log_ok "${BOLD}Quit requested${NC}"
+      hr_green
+      set_smart_title "stopped" "" "$COMPLETED_COUNT" "$FAILED_COUNT" ""
+      break
+    fi
+
     # BUG FIX #14: Use break instead of exit 0 - let caller handle cleanup
     if [[ $MAX_ITERATIONS -gt 0 && $iteration -gt $MAX_ITERATIONS ]]; then
       echo ""
       hr_green
       log_ok "${BOLD}Max iterations ($MAX_ITERATIONS) reached${NC}"
       hr_green
-      set_title "RALPH LOOP | max iterations reached"
+      set_smart_title "done" "" "$COMPLETED_COUNT" "$FAILED_COUNT" ""
       break
     fi
 
@@ -29,18 +39,37 @@ run_loop() {
       break
     fi
 
-    echo ""
-    log_dim "--- Iteration $iteration complete ---"
-    [[ -n "${LOG_FILE:-}" ]] && echo "--- Iteration $iteration complete ---" >> "$LOG_FILE"
+    if [[ "${UI_MODE:-full}" == "full" ]]; then
+      echo ""
+      log_dim "--- Iteration $iteration complete ---"
+      [[ -n "${LOG_FILE:-}" && "${LOG_FORMAT:-text}" == "text" ]] && echo "--- Iteration $iteration complete ---" >> "$LOG_FILE"
+    fi
 
     iteration=$((iteration + 1))
 
-    set_title "RALPH LOOP | idle (waiting)"
-    if [[ "$QUIET" == "true" ]]; then
-      log_info "Waiting $(fmt_hms "$WAIT_TIME")... (Ctrl+C to stop)"
-      sleep "$WAIT_TIME"
+    set_smart_title "idle" "" "$COMPLETED_COUNT" "$FAILED_COUNT" ""
+
+    # Wait between iterations (with keyboard shortcuts)
+    if [[ "${UI_MODE:-full}" == "dashboard" ]]; then
+      dashboard_countdown "$WAIT_TIME"
+    elif [[ "${UI_MODE:-full}" == "full" ]]; then
+      if [[ "$QUIET" == "true" ]]; then
+        log_info "Waiting $(fmt_hms "$WAIT_TIME")... (Ctrl+C to stop)"
+        sleep "$WAIT_TIME"
+      else
+        wait_with_countdown "$WAIT_TIME"
+      fi
     else
-      wait_with_countdown "$WAIT_TIME"
+      sleep "$WAIT_TIME"
+    fi
+
+    # Check quit after countdown
+    if [[ "${QUIT_REQUESTED:-false}" == "true" ]]; then
+      echo ""
+      hr_green
+      log_ok "${BOLD}Quit requested${NC}"
+      hr_green
+      break
     fi
   done
 
@@ -68,6 +97,7 @@ run_worker() {
   # In multi-worker mode, separate log files per worker to avoid interleaving
   if [[ -n "${LOG_FILE:-}" ]]; then
     LOG_FILE="${LOG_FILE%.log}_w${worker_id}.log"
+    : > "$LOG_FILE"  # create early so file exists even if no iterations run
   fi
 
   # Disable features that don't make sense in worker subprocesses
@@ -76,12 +106,12 @@ run_worker() {
   WAIT_COUNTDOWN=false
   BELL_ON_COMPLETION=false
   BELL_ON_END=false
+  ENABLE_NOTIFY=false
 
   # Ensure final counters are written on exit (covers normal exit, TERM, and INT)
-  # shellcheck disable=SC2064
-  trap "write_worker_counters '$worker_id'" EXIT
-  trap "write_worker_counters '$worker_id'; exit 143" TERM
-  trap "write_worker_counters '$worker_id'; exit 130" INT
+  trap 'write_worker_counters "$WORKER_ID"' EXIT
+  trap 'write_worker_counters "$WORKER_ID"; exit 143' TERM
+  trap 'write_worker_counters "$WORKER_ID"; exit 130' INT
 
   local iteration=1
 
@@ -133,41 +163,72 @@ run_parallel() {
   WORKER_PIDS=()
   TAIL_PIDS=()
 
-  echo ""
-  log_info "Spawning ${NUM_WORKERS} parallel workers..."
-  echo ""
+  if [[ "${UI_MODE:-full}" != "minimal" ]]; then
+    echo ""
+    log_info "Spawning ${NUM_WORKERS} parallel workers..."
+    echo ""
+  fi
 
   # Spawn workers with staggered starts
   for i in $(seq 1 "$NUM_WORKERS"); do
     run_worker "$i" "$prompt_file" &
     WORKER_PIDS+=($!)
-    log_ok "Worker W${i} started (PID ${WORKER_PIDS[${#WORKER_PIDS[@]}-1]})"
+    if [[ "${UI_MODE:-full}" != "minimal" ]]; then
+      log_ok "Worker W${i} started (PID ${WORKER_PIDS[${#WORKER_PIDS[@]}-1]})"
+    fi
     # Stagger starts to reduce initial task collision
     if [[ "$i" -lt "$NUM_WORKERS" ]]; then
       sleep 2
     fi
   done
 
-  echo ""
-  log_info "All workers running. Streaming output..."
-  hr
+  if [[ "${UI_MODE:-full}" != "minimal" ]]; then
+    echo ""
+    log_info "All workers running. Streaming output..."
+    hr
+  fi
 
+  # Dashboard mode: render dashboard instead of tailing logs
+  if [[ "${UI_MODE:-full}" == "dashboard" ]]; then
+    _run_parallel_dashboard
+  else
+    _run_parallel_tailed "$prompt_file"
+  fi
+
+  # Aggregate counters from all workers
+  local totals
+  totals="$(read_all_counters)"
+  COMPLETED_COUNT="$(echo "$totals" | awk '{print $1}')"
+  FAILED_COUNT="$(echo "$totals" | awk '{print $2}')"
+  ITERATION_COUNT="$(echo "$totals" | awk '{print $3}')"
+
+  show_run_summary
+  bell end
+
+  # Cleanup
+  rm -rf "$WORKER_STATE_DIR" 2>/dev/null || true
+}
+
+# Parallel mode with tailed worker logs (default)
+_run_parallel_tailed() {
   # Color palette for worker prefixes
   local worker_colors=("$GREEN" "$CYAN" "$YELLOW" "$MAGENTA" "$BLUE" "$ORANGE"
                        "$GREEN" "$CYAN" "$YELLOW" "$MAGENTA" "$BLUE" "$ORANGE"
                        "$GREEN" "$CYAN" "$YELLOW" "$MAGENTA")
 
   # Start per-worker tail processes with colored prefixes
-  for i in $(seq 1 "$NUM_WORKERS"); do
-    local color="${worker_colors[$((i - 1))]}"
-    local wlog="${WORKER_STATE_DIR}/w${i}.log"
-    (
-      tail -f "$wlog" 2>/dev/null | while IFS= read -r line; do
-        printf "%b[W%d]%b %s\n" "$color" "$i" "$NC" "$line"
-      done
-    ) &
-    TAIL_PIDS+=($!)
-  done
+  if [[ "${UI_MODE:-full}" != "minimal" ]]; then
+    for i in $(seq 1 "$NUM_WORKERS"); do
+      local color="${worker_colors[$((i - 1))]}"
+      local wlog="${WORKER_STATE_DIR}/w${i}.log"
+      (
+        tail -f "$wlog" 2>/dev/null | while IFS= read -r line; do
+          printf "%b[W%d]%b %s\n" "$color" "$i" "$NC" "$line"
+        done
+      ) &
+      TAIL_PIDS+=($!)
+    done
+  fi
 
   # Wait for all workers to finish
   local all_done=false
@@ -185,29 +246,65 @@ run_parallel() {
   done
 
   # Stop tail processes
-  for pid in "${TAIL_PIDS[@]}"; do
+  for pid in ${TAIL_PIDS[@]+"${TAIL_PIDS[@]}"}; do
     kill "$pid" 2>/dev/null || true
   done
-  for pid in "${TAIL_PIDS[@]}"; do
+  for pid in ${TAIL_PIDS[@]+"${TAIL_PIDS[@]}"}; do
     wait "$pid" 2>/dev/null || true
   done
 
-  # Brief pause for any final log lines to flush
   sleep 1
 
-  echo ""
-  hr
+  if [[ "${UI_MODE:-full}" != "minimal" ]]; then
+    echo ""
+    hr
+  fi
+}
 
-  # Aggregate counters from all workers
-  local totals
-  totals="$(read_all_counters)"
-  COMPLETED_COUNT="$(echo "$totals" | awk '{print $1}')"
-  FAILED_COUNT="$(echo "$totals" | awk '{print $2}')"
-  ITERATION_COUNT="$(echo "$totals" | awk '{print $3}')"
+# Parallel mode with dashboard rendering
+_run_parallel_dashboard() {
+  local all_done=false
+  while [[ "$all_done" == "false" ]]; do
+    all_done=true
+    for pid in "${WORKER_PIDS[@]}"; do
+      if kill -0 "$pid" 2>/dev/null; then
+        all_done=false
+        break
+      fi
+    done
 
-  show_run_summary
-  bell end
+    if [[ "$all_done" == "false" ]]; then
+      # Aggregate live counters for display
+      local totals
+      totals="$(read_all_counters)"
+      local dash_completed dash_failed dash_iterations
+      dash_completed="$(echo "$totals" | awk '{print $1}')"
+      dash_failed="$(echo "$totals" | awk '{print $2}')"
+      dash_iterations="$(echo "$totals" | awk '{print $3}')"
 
-  # Cleanup
-  rm -rf "$WORKER_STATE_DIR" 2>/dev/null || true
+      local skipped_now run_elapsed
+      skipped_now="$(get_skipped_tasks 2>/dev/null | wc -l | tr -d ' ')"
+      run_elapsed=$(( $(date '+%s') - STARTED_EPOCH ))
+
+      write_dashboard_state "$dash_iterations" "RUNNING" "" \
+        "$dash_completed" "$dash_failed" "$skipped_now" \
+        "0" "$ITERATION_TIMEOUT" "0" "$MAX_TOOL_CALLS" "" "$run_elapsed"
+      render_dashboard "" "" 0
+
+      # Check keyboard
+      local key=""
+      read -rsn1 -t2 key 2>/dev/null || true
+      case "$key" in
+        q|Q)
+          signal_exit
+          break
+          ;;
+      esac
+    fi
+  done
+
+  # Wait for workers to actually finish
+  for pid in "${WORKER_PIDS[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
 }

@@ -48,10 +48,10 @@ bell() {
 run_with_timeout() {
   local seconds="$1"; shift
   if command -v gtimeout >/dev/null 2>&1; then
-    gtimeout "${seconds}" "$@"
+    gtimeout "${seconds}" -- "$@"
     return $?
   elif command -v timeout >/dev/null 2>&1; then
-    timeout "${seconds}" "$@"
+    timeout "${seconds}" -- "$@"
     return $?
   else
     # Perl fork+exec+waitpid with proper signal handling
@@ -63,6 +63,8 @@ run_with_timeout() {
       if ($pid == 0) { exec @ARGV; die "exec failed: $!" }
       eval {
         local $SIG{ALRM} = sub { kill "TERM", $pid; die "timeout\n" };
+        local $SIG{INT}  = sub { kill "INT",  $pid; waitpid($pid, WNOHANG); exit 130; };
+        local $SIG{TERM} = sub { kill "TERM", $pid; waitpid($pid, WNOHANG); exit 143; };
         alarm $timeout;
         waitpid($pid, 0);
         alarm 0;
@@ -72,7 +74,7 @@ run_with_timeout() {
         exit 124;
       }
       exit ($? >> 8);
-    ' "$seconds" "$@"
+    ' -- "$seconds" "$@"
     return $?
   fi
 }
@@ -95,10 +97,23 @@ task_hash() {
 # Git state hash to detect file changes (portable macOS/Linux)
 # Returns empty string on failure (safe for set -e)
 get_file_state_hash() {
+  command -v git >/dev/null 2>&1 || { echo ""; return 0; }
+  local repo_root
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo ""; return 0; }
+  case "$PWD/" in
+    "$repo_root"/*) ;;
+    *) echo ""; return 0 ;;
+  esac
   if command -v md5sum >/dev/null 2>&1; then
     git status --porcelain 2>/dev/null | md5sum 2>/dev/null | cut -c1-8 || echo ""
+  elif command -v md5 >/dev/null 2>&1; then
+    if md5 -q </dev/null >/dev/null 2>&1; then
+      git status --porcelain 2>/dev/null | md5 -q 2>/dev/null | cut -c1-8 || echo ""
+    else
+      git status --porcelain 2>/dev/null | md5 2>/dev/null | awk '{print $NF}' | cut -c1-8 || echo ""
+    fi
   else
-    git status --porcelain 2>/dev/null | md5 2>/dev/null | cut -c1-8 || echo ""
+    echo ""
   fi
 }
 
@@ -125,7 +140,7 @@ show_resources() {
 
   local docker_stats
   docker_stats="$(docker stats --no-stream --format "{{.Name}}: CPU={{.CPUPerc}} MEM={{.MemUsage}}" 2>/dev/null \
-    | grep -E "$pattern" | head -3 || true)"
+    | grep -E -- "$pattern" | head -3 || true)"
   if [[ -n "$docker_stats" ]]; then
     log_info "Resources"
     while IFS= read -r line; do
@@ -186,6 +201,7 @@ Ralph Loop - Autonomous Claude Code runner
 Usage: ralph [options]
 
 Options:
+  help                  Show this help
   -p, --prompt FILE      Prompt file to use (default: RALPH_TASK.md)
   -e, --engine ENGINE    AI engine: claude or codex (default: claude)
   --codex-flags FLAGS    Extra flags passed to \`codex exec\` (default: --full-auto)
@@ -199,10 +215,16 @@ Options:
   --disallowed-tools LIST Comma-separated disallowedTools for claude (default: none)
   -c, --caffeinate       Prevent Mac from sleeping
   -l, --log [FILE]       Log output to file (default: ralph_TIMESTAMP.log)
+  --log-format FORMAT    Log format: text or jsonl (default: text)
   -q, --quiet            Reduce output (keep banners + summaries)
+  --ui MODE              UI mode: full, compact, minimal, dashboard
+  --no-logo              Disable the ASCII logo header
+  --no-status-line       Disable periodic status line updates
+  --ascii                Force ASCII UI (no box-drawing)
   --no-iter-quote        Don't repeat a quote each iteration
   --bell-on-completion   Bell sound when iteration completes
   --bell-on-end          Bell sound when run ends (exit, max iter, Ctrl+C)
+  --notify               Enable OS notifications (macOS/Linux/tmux)
   --no-exit-on-complete  Don't exit when EXIT_SIGNAL detected (keep looping)
   --no-title             Disable terminal title updates
   --no-resources         Disable docker resources section
@@ -211,17 +233,27 @@ Options:
   --clear-attempts       Clear all attempt tracking (fresh start)
   -h, --help             Show this help
 
+UI modes:
+  full       Rich output: banners, progress bars, status lines (default)
+  compact    One-line summaries per iteration (implies --quiet)
+  minimal    Near-silent, essential output only (implies --quiet)
+  dashboard  Live auto-refreshing terminal dashboard with progress bars
+
+Keyboard shortcuts (during wait countdown / dashboard):
+  q  Quit gracefully after current iteration
+  s  Skip wait, start next iteration immediately
+  p  Pause (press r to resume, q to quit)
+
 Examples:
-  ralph
+  ralph                         # Basic usage
+  ralph --ui dashboard          # Live dashboard mode
   ralph -j 3                    # 3 parallel workers
-  ralph -j 2 --max 5            # 2 workers, max 5 iterations each
-  ralph --engine codex
-  ralph -e codex --codex-flags "--full-auto"
+  ralph -j 2 --ui dashboard     # Dashboard with parallel workers
+  ralph --notify                # OS notifications on completion
+  ralph --log --log-format jsonl # Structured event logging
   ralph -p my-task.md
   ralph --max 10 --wait 3
   ralph --caffeinate
-  ralph --log
-  ralph --log my-run.log
   ralph --clear-attempts
 
 EOF

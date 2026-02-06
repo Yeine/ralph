@@ -1,8 +1,52 @@
 #!/usr/bin/env bats
 # Tests for iteration logic - regression tests for critical bug fixes
 
-setup()    { load 'test_helper/common-setup'; _common_setup; }
+setup()    { load 'test_helper/common-setup'; _common_setup; _stub_iteration_deps; }
 teardown() { _common_teardown; }
+
+_stub_iteration_deps() {
+  run_engine() {
+    local prompt_content="$1"
+    local engine="$2"
+    local raw_jsonl="$3"
+    local output_file="$4"
+    local pipe_rc_file="$5"
+    local jq_rc_file="$6"
+    local timeout_seconds="$7"
+    local quiet="$8"
+    local codex_flags="${9:-}"
+    local log_file="${10:-}"
+
+    if [[ -n "${TEST_PIPE_RC:-}" ]]; then
+      printf '%s\n' "$TEST_PIPE_RC" > "$pipe_rc_file"
+    fi
+    if [[ -n "${TEST_JQ_RC:-}" ]]; then
+      printf '%s\n' "$TEST_JQ_RC" > "$jq_rc_file"
+    fi
+    if [[ -n "${TEST_ENGINE_JSONL:-}" ]]; then
+      printf '%s\n' "$TEST_ENGINE_JSONL" > "$raw_jsonl"
+    fi
+    if [[ -n "${TEST_ENGINE_OUTPUT:-}" ]]; then
+      printf '%s\n' "$TEST_ENGINE_OUTPUT" > "$output_file"
+    fi
+
+    : "$prompt_content" "$engine" "$timeout_seconds" "$quiet" "$codex_flags" "$log_file"
+  }
+
+  count_tool_calls_from_jsonl() {
+    echo "${TEST_TOOL_COUNT:-0}"
+  }
+
+  count_tool_calls_from_codex_jsonl() {
+    echo "${TEST_TOOL_COUNT:-0}"
+  }
+}
+
+_make_prompt_file() {
+  local prompt_file="${TEST_TMPDIR}/prompt.md"
+  printf '%s\n' "# Prompt" > "$prompt_file"
+  echo "$prompt_file"
+}
 
 # --- BUG FIX #1: Double-counting COMPLETED_COUNT on EXIT_SIGNAL ---
 
@@ -81,4 +125,68 @@ teardown() { _common_teardown; }
   fi
 
   assert_equal "$should_continue" "true"
+}
+
+# --- run_iteration integration tests ---
+
+@test "run_iteration: EXIT_SIGNAL returns 98 when exit-on-complete" {
+  local prompt_file
+  prompt_file="$(_make_prompt_file)"
+
+  UI_MODE="compact"
+  QUIET=true
+  EXIT_ON_COMPLETE=true
+  NUM_WORKERS=1
+  WORKER_ID=0
+  SHOW_QUOTE_EACH_ITERATION=false
+
+  TEST_ENGINE_OUTPUT=$'PICKING: Task A\nEXIT_SIGNAL: true\nDONE: Task A'
+  run run_iteration 1 "$prompt_file"
+  assert_failure 98
+}
+
+@test "run_iteration: EXIT_SIGNAL returns 99 and clears claim in multi-worker mode" {
+  local prompt_file
+  prompt_file="$(_make_prompt_file)"
+
+  UI_MODE="compact"
+  QUIET=true
+  EXIT_ON_COMPLETE=true
+  NUM_WORKERS=2
+  WORKER_ID=1
+  SHOW_QUOTE_EACH_ITERATION=false
+
+  local claim_marker="${TEST_TMPDIR}/claim_cleared"
+  local exit_marker="${TEST_TMPDIR}/exit_signal_sent"
+  clear_claim() { printf '%s' "$1" > "$claim_marker"; }
+  signal_exit() { printf 'yes' > "$exit_marker"; }
+
+  TEST_ENGINE_OUTPUT=$'EXIT_SIGNAL: true'
+  run run_iteration 1 "$prompt_file"
+  assert_failure 99
+  assert_file_exist "$claim_marker"
+  assert_file_exist "$exit_marker"
+  assert_equal "$(cat "$claim_marker")" "1"
+}
+
+@test "run_iteration: ATTEMPT_FAILED increments attempts and skips at max" {
+  local prompt_file
+  prompt_file="$(_make_prompt_file)"
+
+  UI_MODE="compact"
+  QUIET=true
+  SHOW_QUOTE_EACH_ITERATION=false
+  MAX_ATTEMPTS=1
+
+  rm -f "$ATTEMPTS_FILE"
+
+  TEST_ENGINE_OUTPUT=$'ATTEMPT_FAILED: Flaky task'
+  run run_iteration 1 "$prompt_file"
+  assert_success
+
+  local attempts skipped
+  attempts="$(get_attempts "Flaky task")"
+  skipped="$(get_skipped_tasks)"
+  assert_equal "$attempts" "1"
+  assert_equal "$skipped" "Flaky task"
 }

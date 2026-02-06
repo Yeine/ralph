@@ -36,6 +36,21 @@ teardown() { _common_teardown; }
   assert_output "2"
 }
 
+@test "get_attempts: treats non-numeric attempts as 0" {
+  local key
+  key="$(task_hash "weird task")"
+  printf '{"%s":{"task":"weird task","attempts":"oops","skipped":false}}\n' "$key" > "$ATTEMPTS_FILE"
+  run get_attempts "weird task"
+  assert_output "0"
+}
+
+@test "get_attempts: returns 0 when attempts file is corrupted" {
+  printf '{not json' > "$ATTEMPTS_FILE"
+  run get_attempts "broken task"
+  assert_success
+  assert_output "0"
+}
+
 # --- increment_attempts ---
 
 @test "increment_attempts: increases count and returns new value" {
@@ -96,6 +111,13 @@ teardown() { _common_teardown; }
   refute_output --partial "not skipped"
 }
 
+@test "get_skipped_tasks: returns empty when attempts file is corrupted" {
+  printf '{not json' > "$ATTEMPTS_FILE"
+  run get_skipped_tasks
+  assert_success
+  assert_output ""
+}
+
 # --- clear_attempts ---
 
 @test "clear_attempts: resets all state" {
@@ -110,4 +132,35 @@ teardown() { _common_teardown; }
   assert_output "0"
   run get_skipped_tasks
   assert_output ""
+}
+
+# --- show_attempts ---
+
+@test "show_attempts: prints empty state when no attempts" {
+  run show_attempts
+  assert_output --partial "Current attempt tracking state"
+  assert_output --partial "No attempts tracked yet."
+}
+
+@test "show_attempts: prints empty state when attempts file is empty" {
+  : > "$ATTEMPTS_FILE"
+  run show_attempts
+  assert_success
+  assert_output --partial "No attempts tracked yet."
+}
+
+@test "show_attempts: reports parse failure for corrupted attempts file" {
+  printf '{not json' > "$ATTEMPTS_FILE"
+  run show_attempts
+  assert_failure
+  assert_output --partial "Failed to parse attempts file"
+}
+
+@test "show_attempts: lists attempts and skipped tasks" {
+  increment_attempts "task A" >/dev/null
+  increment_attempts "task A" >/dev/null
+  mark_skipped "task B"
+  run show_attempts
+  assert_output --partial "task A: 2 attempts"
+  assert_output --partial "task B: SKIPPED (attempts=0)"
 }

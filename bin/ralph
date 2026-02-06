@@ -17,6 +17,13 @@ set -euo pipefail
 # Resolve symlinks portably (readlink -f not available on stock macOS)
 _resolve_symlink() {
   local target="$1"
+  if [[ "$target" != */* ]]; then
+    local resolved
+    resolved="$(command -v -- "$target" 2>/dev/null || true)"
+    if [[ -n "$resolved" && "$resolved" == /* ]]; then
+      target="$resolved"
+    fi
+  fi
   while [[ -L "$target" ]]; do
     local dir
     dir="$(cd "$(dirname "$target")" && pwd)"
@@ -74,6 +81,13 @@ ALLOWED_TOOLS=""
 DISALLOWED_TOOLS=""
 NUM_WORKERS=1
 WORKER_ID=0             # 0 = main process, 1..N = worker subprocess
+UI_MODE="full"
+SHOW_LOGO=true
+SHOW_STATUS_LINE=true
+UI_ASCII=false
+ENABLE_NOTIFY=false
+LOG_FORMAT="text"       # text or jsonl
+QUIT_REQUESTED=false
 
 # Save original args for caffeinate re-exec
 ORIGINAL_ARGS=("$@")
@@ -97,6 +111,47 @@ TAIL_PIDS=()
 # CLI parsing
 # -----------------------------------------------------------------------------
 _require_arg() { [[ $# -ge 2 ]] || { echo "Error: Option $1 requires an argument" >&2; exit 1; }; }
+_validate_path_arg() {
+  local label="$1" path="$2"
+  if [[ -z "$path" ]]; then
+    log_err "$(sanitize_tty_text "${label} path cannot be empty")"
+    exit 1
+  fi
+  if [[ "$path" == *$'\n'* || "$path" == *$'\r'* ]]; then
+    log_err "$(sanitize_tty_text "${label} path contains newline characters")"
+    exit 1
+  fi
+  if [[ "$path" == -* ]]; then
+    log_err "$(sanitize_tty_text "${label} path cannot start with '-' (use ./<path> to disambiguate)")"
+    exit 1
+  fi
+}
+
+_validate_log_file() {
+  local path="$1"
+  local path_safe dir_safe
+  path_safe="$(sanitize_tty_text "$path")"
+  _validate_path_arg "Log file" "$path"
+  if [[ -e "$path" && ! -f "$path" ]]; then
+    log_err "Log path exists but is not a regular file: $path_safe"
+    exit 1
+  fi
+  local dir
+  dir="$(dirname -- "$path")"
+  dir_safe="$(sanitize_tty_text "$dir")"
+  if [[ ! -d "$dir" ]]; then
+    log_err "Log directory does not exist: $dir_safe"
+    exit 1
+  fi
+  if [[ ! -w "$dir" ]]; then
+    log_err "Log directory is not writable: $dir_safe"
+    exit 1
+  fi
+  if [[ -e "$path" && ! -w "$path" ]]; then
+    log_err "Log file is not writable: $path_safe"
+    exit 1
+  fi
+}
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -117,9 +172,15 @@ while [[ $# -gt 0 ]]; do
     --no-title)     ENABLE_TITLE=false; shift ;;
     --no-resources) SHOW_RESOURCES=false; shift ;;
     --no-wait-countdown) WAIT_COUNTDOWN=false; shift ;;
+    --no-status-line) SHOW_STATUS_LINE=false; shift ;;
+    --no-logo)     SHOW_LOGO=false; shift ;;
+    --ascii)       UI_ASCII=true; shift ;;
     -j|--workers) _require_arg "$@"; NUM_WORKERS="$2"; shift 2 ;;
     --allowed-tools) _require_arg "$@"; ALLOWED_TOOLS="$2"; shift 2 ;;
     --disallowed-tools) _require_arg "$@"; DISALLOWED_TOOLS="$2"; shift 2 ;;
+    --ui) _require_arg "$@"; UI_MODE="$2"; shift 2 ;;
+    --notify)      ENABLE_NOTIFY=true; shift ;;
+    --log-format) _require_arg "$@"; LOG_FORMAT="$2"; shift 2 ;;
     -l|--log)
       if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
         LOG_FILE="$2"; shift 2
@@ -135,9 +196,12 @@ while [[ $# -gt 0 ]]; do
       init_attempts_file
       show_attempts
       exit 0 ;;
+    help)
+      usage
+      exit 0 ;;
     -h|--help) usage; exit 0 ;;
     *)
-      log_err "Unknown option: $1"
+      log_err "Unknown option: $(sanitize_tty_text "$1")"
       echo ""
       usage
       exit 1 ;;
@@ -148,34 +212,60 @@ done
 # Validate inputs
 # -----------------------------------------------------------------------------
 if [[ "$ENGINE" != "claude" && "$ENGINE" != "codex" ]]; then
-  log_err "Unknown engine: $ENGINE (must be 'claude' or 'codex')"
+  log_err "Unknown engine: $(sanitize_tty_text "$ENGINE") (must be 'claude' or 'codex')"
+  exit 1
+fi
+
+if [[ "$UI_MODE" != "full" && "$UI_MODE" != "compact" && "$UI_MODE" != "minimal" && "$UI_MODE" != "dashboard" ]]; then
+  log_err "Unknown UI mode: $(sanitize_tty_text "$UI_MODE") (must be 'full', 'compact', 'minimal', or 'dashboard')"
+  exit 1
+fi
+
+if [[ "$UI_MODE" == "compact" || "$UI_MODE" == "minimal" ]]; then
+  QUIET=true
+fi
+
+if [[ "$LOG_FORMAT" != "text" && "$LOG_FORMAT" != "jsonl" ]]; then
+  log_err "Unknown log format: $(sanitize_tty_text "$LOG_FORMAT") (must be 'text' or 'jsonl')"
   exit 1
 fi
 
 for _numvar_name in MAX_ITERATIONS WAIT_TIME MAX_ATTEMPTS ITERATION_TIMEOUT MAX_TOOL_CALLS NUM_WORKERS; do
   _numvar_val="${!_numvar_name}"
   if ! [[ "$_numvar_val" =~ ^[0-9]+$ ]]; then
-    log_err "${_numvar_name} must be a non-negative integer, got: $_numvar_val"
+    log_err "${_numvar_name} must be a non-negative integer, got: $(sanitize_tty_text "$_numvar_val")"
     exit 1
   fi
 done
 
 if [[ "$NUM_WORKERS" -lt 1 || "$NUM_WORKERS" -gt 16 ]]; then
-  log_err "Workers must be 1-16, got: $NUM_WORKERS"
+  log_err "Workers must be 1-16, got: $(sanitize_tty_text "$NUM_WORKERS")"
   exit 1
 fi
+
+_validate_path_arg "Prompt file" "$PROMPT_FILE"
+if [[ -n "$LOG_FILE" ]]; then
+  _validate_log_file "$LOG_FILE"
+fi
+
+setup_ui_charset
+setup_dashboard
 
 # -----------------------------------------------------------------------------
 # Caffeinate: re-exec under caffeinate if requested
 # -----------------------------------------------------------------------------
 if [[ "$USE_CAFFEINATE" == true && -z "${RALPH_CAFFEINATED:-}" ]]; then
+  if ! command -v caffeinate >/dev/null 2>&1; then
+    log_err "caffeinate not found (only available on macOS)"
+    exit 1
+  fi
   log_info "Running with caffeinate (Mac will stay awake)"
   export RALPH_CAFFEINATED=1
   filtered_args=()
   for arg in "${ORIGINAL_ARGS[@]}"; do
     [[ "$arg" != "-c" && "$arg" != "--caffeinate" ]] && filtered_args+=("$arg")
   done
-  exec caffeinate -i "$0" "${filtered_args[@]}"
+  exec caffeinate -i "$RALPH_REAL_PATH" "${filtered_args[@]}"
 fi
 
 # -----------------------------------------------------------------------------
@@ -184,7 +274,7 @@ fi
 check_dependencies
 
 if [[ ! -f "$PROMPT_FILE" ]]; then
-  log_err "Prompt file '$PROMPT_FILE' not found"
+  log_err "Prompt file '$(sanitize_tty_text "$PROMPT_FILE")' not found"
   echo ""
   cat <<EOF
 Create a RALPH_TASK.md with your task instructions, for example:
@@ -193,6 +283,10 @@ Create a RALPH_TASK.md with your task instructions, for example:
   Read TODO.md and find the first unchecked item.
   Complete it, then mark it [x] done.
 EOF
+  exit 1
+fi
+if [[ ! -r "$PROMPT_FILE" ]]; then
+  log_err "Prompt file '$(sanitize_tty_text "$PROMPT_FILE")' is not readable"
   exit 1
 fi
 
@@ -206,10 +300,15 @@ print_header() {
   STARTED_AT="$(date '+%Y-%m-%d %H:%M:%S')"
   STARTED_EPOCH="$(date '+%s')"
 
-  set_title "RALPH LOOP | starting..."
+  set_smart_title "starting" "" "0" "0" ""
 
-  printf "%b\n" "${BLUE}"
-  cat << "LOGO"
+  if [[ "$UI_MODE" == "minimal" ]]; then
+    return 0
+  fi
+
+  if [[ "$SHOW_LOGO" == "true" ]]; then
+    printf "%b\n" "${BLUE}"
+    cat << "LOGO"
    ██████╗  █████╗ ██╗     ██████╗ ██╗  ██╗
    ██╔══██╗██╔══██╗██║     ██╔══██╗██║  ██║
    ██████╔╝███████║██║     ██████╔╝███████║
@@ -219,8 +318,8 @@ print_header() {
 
         R A L P H   L O O P
 LOGO
-  printf "%b\n" "${NC}"
-
+    printf "%b\n" "${NC}"
+  fi
   hr
   local engine_label
   engine_label="$(printf "%s" "$ENGINE" | tr '[:lower:]' '[:upper:]')"
@@ -228,6 +327,13 @@ LOGO
   printf "%b\n" "${DIM}Run ID:${NC} ${BOLD}${CYAN}${RUN_ID}${NC}  ${DIM}Started:${NC} ${CYAN}${STARTED_AT}${NC}"
   hr
   echo ""
+
+  log_event_jsonl "run_start" \
+    "run_id" "$RUN_ID" \
+    "engine" "$ENGINE" \
+    "workers" "$NUM_WORKERS" \
+    "timeout" "$ITERATION_TIMEOUT" \
+    "max_tools" "$MAX_TOOL_CALLS"
 }
 
 print_header
@@ -235,76 +341,105 @@ print_header
 # -----------------------------------------------------------------------------
 # Config panel
 # -----------------------------------------------------------------------------
-box_title "Config"
+if [[ "$UI_MODE" != "minimal" ]]; then
+  box_title "Config"
 
-max_iter_display="$([[ $MAX_ITERATIONS -eq 0 ]] && echo "unlimited" || echo "${MAX_ITERATIONS}")"
-timeout_display="$(fmt_hms "$ITERATION_TIMEOUT")"
-wait_display="$(fmt_hms "$WAIT_TIME")"
+  max_iter_display="$([[ $MAX_ITERATIONS -eq 0 ]] && echo "unlimited" || echo "${MAX_ITERATIONS}")"
+  timeout_display="$(fmt_hms "$ITERATION_TIMEOUT")"
+  wait_display="$(fmt_hms "$WAIT_TIME")"
 
-skipped_list="$(get_skipped_tasks || true)"
-skipped_count=0
-if [[ -n "$skipped_list" ]]; then
-  skipped_count="$(printf "%s\n" "$skipped_list" | wc -l | tr -d ' ')"
+  skipped_list="$(get_skipped_tasks || true)"
+  skipped_count=0
+  if [[ -n "$skipped_list" ]]; then
+    skipped_count="$(printf "%s\n" "$skipped_list" | wc -l | tr -d ' ')"
+  fi
+
+  engine_display="$(printf "%s" "$ENGINE" | tr '[:lower:]' '[:upper:]')"
+  if [[ "$ENGINE" == "codex" ]]; then
+    engine_display="${engine_display} (flags: $(sanitize_tty_text "$CODEX_EXEC_FLAGS"))"
+  fi
+
+  prompt_safe="$(sanitize_tty_text "$PROMPT_FILE")"
+  log_safe="$(sanitize_tty_text "$LOG_FILE")"
+
+  if [[ "$NUM_WORKERS" -gt 1 ]]; then
+    printf "  %-16s %b\n" "Workers:" "${YELLOW}${NUM_WORKERS} parallel${NC}"
+  else
+    printf "  %-16s %b\n" "Workers:" "${DIM}1 (sequential)${NC}"
+  fi
+  printf "  %-16s %b\n" "Engine:"     "${CYAN}${engine_display}${NC}"
+  printf "  %-16s %b\n" "Prompt:"     "${GREEN}${prompt_safe}${NC}"
+  printf "  %-16s %b\n" "Iterations:" "${YELLOW}${max_iter_display}${NC}"
+  printf "  %-16s %b\n" "Wait:"       "${YELLOW}${wait_display}${NC}"
+  printf "  %-16s %b\n" "Attempts:"   "${YELLOW}${MAX_ATTEMPTS}${NC}"
+  printf "  %-16s %b\n" "Timeout:"    "${YELLOW}${timeout_display}${NC}"
+  printf "  %-16s %b\n" "Max tools:"  "${YELLOW}${MAX_TOOL_CALLS}${NC}"
+  printf "  %-16s %b\n" "UI:"         "${CYAN}${UI_MODE}${NC}"
+  printf "  %-16s %b\n" "Exit on done:"  "$([[ "$EXIT_ON_COMPLETE" == "true" ]] && echo "${GREEN}yes${NC}" || echo "${YELLOW}no (loop forever)${NC}")"
+
+  if [[ -n "$LOG_FILE" ]]; then
+    printf "  %-16s %b\n" "Log:"        "${GREEN}${log_safe}${NC} ${DIM}(${LOG_FORMAT})${NC}"
+  else
+    printf "  %-16s %b\n" "Log:"        "${DIM}(disabled)${NC}"
+  fi
+
+  if [[ "$ENABLE_NOTIFY" == "true" ]]; then
+    printf "  %-16s %b\n" "Notify:"     "${GREEN}enabled${NC}"
+  fi
+
+  if [[ "$skipped_count" -gt 0 ]]; then
+    printf "  %-16s %b\n" "Skipped:"    "${RED}${skipped_count}${NC} ${DIM}(use --show-attempts)${NC}"
+  else
+    printf "  %-16s %b\n" "Skipped:"    "${GREEN}0${NC}"
+  fi
+
+  echo ""
+  if [[ "$UI_MODE" == "dashboard" ]]; then
+    log_dim "Tip: q:quit s:skip p:pause | Dashboard mode active"
+  else
+    log_dim "Tip: q:quit s:skip p:pause during countdown | Ctrl+C to stop anytime"
+  fi
 fi
 
-engine_display="$(printf "%s" "$ENGINE" | tr '[:lower:]' '[:upper:]')"
-if [[ "$ENGINE" == "codex" ]]; then
-  engine_display="${engine_display} (flags: ${CODEX_EXEC_FLAGS})"
-fi
-
-if [[ "$NUM_WORKERS" -gt 1 ]]; then
-  printf "  %-16s %b\n" "Workers:" "${YELLOW}${NUM_WORKERS} parallel${NC}"
-else
-  printf "  %-16s %b\n" "Workers:" "${DIM}1 (sequential)${NC}"
-fi
-printf "  %-16s %b\n" "Engine:"     "${CYAN}${engine_display}${NC}"
-printf "  %-16s %b\n" "Prompt:"     "${GREEN}${PROMPT_FILE}${NC}"
-printf "  %-16s %b\n" "Iterations:" "${YELLOW}${max_iter_display}${NC}"
-printf "  %-16s %b\n" "Wait:"       "${YELLOW}${wait_display}${NC}"
-printf "  %-16s %b\n" "Attempts:"   "${YELLOW}${MAX_ATTEMPTS}${NC}"
-printf "  %-16s %b\n" "Timeout:"    "${YELLOW}${timeout_display}${NC}"
-printf "  %-16s %b\n" "Max tools:"  "${YELLOW}${MAX_TOOL_CALLS}${NC}"
-printf "  %-16s %b\n" "Exit on done:"  "$([[ "$EXIT_ON_COMPLETE" == "true" ]] && echo "${GREEN}yes${NC}" || echo "${YELLOW}no (loop forever)${NC}")"
-
-if [[ -n "$LOG_FILE" ]]; then
-  printf "  %-16s %b\n" "Log:"        "${GREEN}${LOG_FILE}${NC}"
-else
-  printf "  %-16s %b\n" "Log:"        "${DIM}(disabled)${NC}"
-fi
-
-if [[ "$skipped_count" -gt 0 ]]; then
-  printf "  %-16s %b\n" "Skipped:"    "${RED}${skipped_count}${NC} ${DIM}(use --show-attempts)${NC}"
-else
-  printf "  %-16s %b\n" "Skipped:"    "${GREEN}0${NC}"
-fi
-
-echo ""
-log_dim "Tip: Ctrl+C stops | --quiet for minimal output | --no-title if your terminal hates OSC"
-echo ""
-
-if [[ "$QUIET" == "false" ]]; then
-  sleep 1
+if [[ "$UI_MODE" != "minimal" ]]; then
+  echo ""
+  if [[ "$QUIET" == "false" ]]; then
+    sleep 1
+  fi
 fi
 
 # -----------------------------------------------------------------------------
 # Signal handling
 # -----------------------------------------------------------------------------
+# Recursively kill a process and all its descendants (children first).
+_kill_tree() {
+  local pid="$1"
+  local children
+  children="$(pgrep -P "$pid" 2>/dev/null)" || true
+  for child in $children; do
+    _kill_tree "$child"
+  done
+  kill "$pid" 2>/dev/null || true
+}
+
 cleanup() {
+  tput cnorm 2>/dev/null || true  # ensure cursor is visible
+  cleanup_dashboard
+  clear_iterm_badge
   echo ""
   log_warn "Caught interrupt signal, shutting down..."
-  set_title "RALPH LOOP | stopping..."
+  set_smart_title "stopping" "" "$COMPLETED_COUNT" "$FAILED_COUNT" ""
 
   if [[ "$NUM_WORKERS" -gt 1 ]]; then
     # Signal workers to stop via sentinel
     signal_exit
     # Kill tail processes
-    for pid in "${TAIL_PIDS[@]}"; do
+    for pid in ${TAIL_PIDS[@]+"${TAIL_PIDS[@]}"}; do
       kill "$pid" 2>/dev/null || true
     done
-    # Kill worker processes and their children
+    # Kill worker processes and their entire process trees
     for pid in "${WORKER_PIDS[@]}"; do
-      pkill -P "$pid" 2>/dev/null || true
-      kill "$pid" 2>/dev/null || true
+      _kill_tree "$pid"
     done
     # BUG FIX #6: Wait for workers to actually terminate instead of arbitrary sleep
     for pid in "${WORKER_PIDS[@]}"; do
@@ -323,11 +458,13 @@ cleanup() {
       ITERATION_COUNT="$(echo "$totals" | awk '{print $3}')"
     fi
   else
+    # Kill engine and its entire process tree (codex/claude, perl timeout, tee, jq)
     if [[ -n "${CLAUDE_PID:-}" ]]; then
-      kill "$CLAUDE_PID" 2>/dev/null || true
+      _kill_tree "$CLAUDE_PID"
     fi
   fi
 
+  # Catch any remaining children
   pkill -P $$ 2>/dev/null || true
   show_run_summary
   bell end
@@ -338,6 +475,10 @@ cleanup() {
   exit 0
 }
 trap cleanup INT TERM
+
+# Terminal resize: interrupt sleep/read so dashboard redraws promptly.
+# Width is re-detected dynamically via tput cols on each render call.
+trap : WINCH
 
 # -----------------------------------------------------------------------------
 # Run

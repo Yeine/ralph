@@ -13,6 +13,57 @@ teardown() {
   [[ -d "${TEST_TMPDIR:-}" ]] && rm -rf "$TEST_TMPDIR"
 }
 
+make_stub_claude() {
+  local bin_dir="$1"
+  cat > "${bin_dir}/claude" <<'EOF'
+#!/usr/bin/env bash
+cat <<'JSON'
+{"result":"EXIT_SIGNAL: true"}
+JSON
+EOF
+  chmod +x "${bin_dir}/claude"
+}
+
+make_stub_codex() {
+  local bin_dir="$1"
+  cat > "${bin_dir}/codex" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+record_file="${CODEX_RECORD:-}"
+if [[ -n "$record_file" ]]; then
+  {
+    for arg in "$@"; do
+      printf 'ARG:%s\n' "$arg"
+    done
+  } > "$record_file"
+fi
+cat >/dev/null
+cat <<'JSON'
+{"type":"item.completed","item":{"type":"agent_message","text":"EXIT_SIGNAL: true"}}
+JSON
+EOF
+  chmod +x "${bin_dir}/codex"
+}
+
+make_stub_caffeinate() {
+  local bin_dir="$1"
+  cat > "${bin_dir}/caffeinate" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+record_file="${CAFFEINATE_RECORD:-}"
+if [[ -n "$record_file" ]]; then
+  {
+    printf 'RALPH_CAFFEINATED=%s\n' "${RALPH_CAFFEINATED:-}"
+    for arg in "$@"; do
+      printf 'ARG:%s\n' "$arg"
+    done
+  } > "$record_file"
+fi
+exit 0
+EOF
+  chmod +x "${bin_dir}/caffeinate"
+}
+
 # --- --help ---
 
 @test "ralph --help: exits 0 and shows usage" {
@@ -80,4 +131,117 @@ teardown() {
   run "${RALPH_ROOT}/bin/ralph" --foobar
   assert_failure
   assert_output --partial "Unknown option"
+}
+
+# --- --log ---
+
+@test "ralph --log: writes output to log file" {
+  local bin_dir="${TEST_TMPDIR}/bin"
+  mkdir -p "$bin_dir"
+  make_stub_claude "$bin_dir"
+
+  local prompt_file="${TEST_TMPDIR}/prompt.md"
+  printf "Test task\n" > "$prompt_file"
+
+  local log_file="${TEST_TMPDIR}/ralph.log"
+  run env PATH="${bin_dir}:$PATH" \
+    "${RALPH_ROOT}/bin/ralph" \
+    --prompt "$prompt_file" \
+    --engine "claude" \
+    --max 1 \
+    --wait 0 \
+    --ui minimal \
+    --log "$log_file"
+  assert_success
+
+  run cat "$log_file"
+  assert_success
+  assert_output --partial "EXIT_SIGNAL: true"
+}
+
+# --- --engine codex ---
+
+@test "ralph --engine codex: runs codex path and emits output" {
+  local bin_dir="${TEST_TMPDIR}/bin"
+  mkdir -p "$bin_dir"
+  make_stub_codex "$bin_dir"
+
+  local record_file="${TEST_TMPDIR}/codex_record"
+  local prompt_file="${TEST_TMPDIR}/prompt.md"
+  printf "Test task\n" > "$prompt_file"
+
+  run env PATH="${bin_dir}:$PATH" CODEX_RECORD="$record_file" \
+    "${RALPH_ROOT}/bin/ralph" \
+    --prompt "$prompt_file" \
+    --engine "codex" \
+    --max 1 \
+    --wait 0 \
+    --ui minimal
+  assert_success
+  assert_output --partial "EXIT_SIGNAL detected"
+  run cat "$record_file"
+  assert_success
+  assert_output --partial "ARG:exec"
+}
+
+# --- parallel workers ---
+
+@test "ralph --workers: writes per-worker logs in parallel mode" {
+  local bin_dir="${TEST_TMPDIR}/bin"
+  mkdir -p "$bin_dir"
+  make_stub_claude "$bin_dir"
+
+  local prompt_file="${TEST_TMPDIR}/prompt.md"
+  printf "Test task\n" > "$prompt_file"
+
+  local base_log="${TEST_TMPDIR}/parallel.log"
+  run env PATH="${bin_dir}:$PATH" \
+    "${RALPH_ROOT}/bin/ralph" \
+    --prompt "$prompt_file" \
+    --engine "claude" \
+    --max 1 \
+    --wait 0 \
+    --ui minimal \
+    --workers 2 \
+    --log "$base_log"
+  assert_success
+
+  run cat "${TEST_TMPDIR}/parallel_w1.log"
+  assert_success
+  assert_output --partial "EXIT_SIGNAL: true"
+
+  # Worker 2 may not run an iteration if worker 1's EXIT_SIGNAL fires first,
+  # but its log file should still be created.
+  [ -f "${TEST_TMPDIR}/parallel_w2.log" ]
+}
+
+# --- --caffeinate ---
+
+@test "ralph --caffeinate: re-execs via caffeinate without leaking flag" {
+  local bin_dir="${TEST_TMPDIR}/bin"
+  mkdir -p "$bin_dir"
+  make_stub_caffeinate "$bin_dir"
+
+  local record_file="${TEST_TMPDIR}/caffeinate_record"
+  local prompt_file="${TEST_TMPDIR}/prompt.md"
+  printf "Test task\n" > "$prompt_file"
+
+  run env PATH="${bin_dir}:$PATH" CAFFEINATE_RECORD="$record_file" \
+    "${RALPH_ROOT}/bin/ralph" \
+    --caffeinate \
+    --prompt "$prompt_file" \
+    --max 1 \
+    --wait 0 \
+    --ui minimal
+  assert_success
+
+  run cat "$record_file"
+  assert_success
+  assert_output --partial "RALPH_CAFFEINATED=1"
+  assert_output --partial "ARG:-i"
+  assert_output --partial "/bin/ralph"
+  assert_output --partial "ARG:--prompt"
+  assert_output --partial "ARG:${prompt_file}"
+  refute_output --partial "ARG:--caffeinate"
+  refute_output --partial "ARG:-c"
 }

@@ -4,7 +4,7 @@
 # shellcheck disable=SC2034  # Variables used by other modules
 
 setup_colors() {
-  if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+  if [[ -t 1 && -z "${NO_COLOR+x}" ]]; then
     GREEN='\033[0;32m'
     YELLOW='\033[1;33m'
     BLUE='\033[0;34m'
@@ -21,6 +21,9 @@ setup_colors() {
     local color_count=8
     if command -v tput >/dev/null 2>&1; then
       color_count="$(tput colors 2>/dev/null || echo 8)"
+    fi
+    if [[ ! "$color_count" =~ ^[0-9]+$ ]]; then
+      color_count=8
     fi
     if [[ "$color_count" -ge 256 ]]; then
       ORANGE='\033[38;5;208m'

@@ -12,3 +12,7 @@ Thumbs.db
 *~
 .idea/
 .vscode/
+
+###> ralph ###
+ralph/
+###< ralph ###
