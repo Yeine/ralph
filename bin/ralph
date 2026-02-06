@@ -63,7 +63,7 @@ MAX_ITERATIONS=0        # 0 = unlimited
 WAIT_TIME=5
 USE_CAFFEINATE=false
 LOG_FILE=""
-ATTEMPTS_FILE=".ralph_attempts.json"
+ATTEMPTS_FILE="${ATTEMPTS_FILE:-.ralph_attempts.json}"
 MAX_ATTEMPTS=3          # Skip task after this many failures
 ITERATION_TIMEOUT=600   # 10 minutes max per iteration
 MAX_TOOL_CALLS=50       # Consider stuck if more than this without completing
@@ -87,7 +87,6 @@ SHOW_STATUS_LINE=true
 UI_ASCII=false
 ENABLE_NOTIFY=false
 LOG_FORMAT="text"       # text or jsonl
-QUIT_REQUESTED=false
 
 # Save original args for caffeinate re-exec
 ORIGINAL_ARGS=("$@")
@@ -413,16 +412,29 @@ fi
 # -----------------------------------------------------------------------------
 # Recursively kill a process and all its descendants (children first).
 _kill_tree() {
-  local pid="$1"
+  local pid="$1" sig="${2:-TERM}"
   local children
   children="$(pgrep -P "$pid" 2>/dev/null)" || true
   for child in $children; do
-    _kill_tree "$child"
+    _kill_tree "$child" "$sig"
   done
-  kill "$pid" 2>/dev/null || true
+  kill -s "$sig" "$pid" 2>/dev/null || true
+}
+
+# Kill all descendants of a PID (but not the PID itself)
+_kill_descendants() {
+  local pid="$1" sig="${2:-TERM}"
+  local children
+  children="$(pgrep -P "$pid" 2>/dev/null)" || true
+  for child in $children; do
+    _kill_tree "$child" "$sig"
+  done
 }
 
 cleanup() {
+  # Prevent re-entry and protect ourselves from group signals
+  trap '' INT TERM
+
   tput cnorm 2>/dev/null || true  # ensure cursor is visible
   cleanup_dashboard
   clear_iterm_badge
@@ -441,7 +453,7 @@ cleanup() {
     for pid in "${WORKER_PIDS[@]}"; do
       _kill_tree "$pid"
     done
-    # BUG FIX #6: Wait for workers to actually terminate instead of arbitrary sleep
+    # Wait for workers to actually terminate
     for pid in "${WORKER_PIDS[@]}"; do
       local wait_count=0
       while kill -0 "$pid" 2>/dev/null && [[ "$wait_count" -lt 50 ]]; do
@@ -460,12 +472,19 @@ cleanup() {
   else
     # Kill engine and its entire process tree (codex/claude, perl timeout, tee, jq)
     if [[ -n "${CLAUDE_PID:-}" ]]; then
-      _kill_tree "$CLAUDE_PID"
+      _kill_tree "$CLAUDE_PID" INT
+      sleep 0.3
+      _kill_tree "$CLAUDE_PID" TERM
     fi
   fi
 
-  # Catch any remaining children
-  pkill -P $$ 2>/dev/null || true
+  # Aggressively kill all remaining descendants (handles reparented orphans)
+  _kill_descendants $$ INT
+  sleep 0.2
+  _kill_descendants $$ TERM
+  sleep 0.2
+  _kill_descendants $$ KILL
+
   show_run_summary
   bell end
 

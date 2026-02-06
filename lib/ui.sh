@@ -517,39 +517,9 @@ wait_with_countdown() {
     return 0
   fi
 
-  local key_hint="q:quit s:skip p:pause"
   for ((i=seconds; i>0; i--)); do
-    printf "\r%b\033[K" "${BLUE}T${NC}  Next in ${YELLOW}${i}s${NC} ${DIM}| ${key_hint}${NC}"
-    local key=""
-    read -rsn1 -t1 key 2>/dev/null || true
-    case "$key" in
-      q|Q)
-        printf "\r\033[K"
-        log_info "Quit requested, finishing..."
-        QUIT_REQUESTED=true
-        return 0
-        ;;
-      s|S)
-        printf "\r\033[K"
-        return 0
-        ;;
-      p|P)
-        printf "\r\033[K"
-        log_info "Paused. Press ${BOLD}r${NC} to resume, ${BOLD}q${NC} to quit."
-        while true; do
-          local rkey=""
-          read -rsn1 -t1 rkey 2>/dev/null || true
-          case "$rkey" in
-            r|R) break ;;
-            q|Q)
-              QUIT_REQUESTED=true
-              return 0
-              ;;
-          esac
-        done
-        log_info "Resumed."
-        ;;
-    esac
+    printf "\r%b\033[K" "${BLUE}T${NC}  Next in ${YELLOW}${i}s${NC}"
+    sleep 1
   done
   printf "\r\033[K"
 }
@@ -1233,9 +1203,6 @@ render_dashboard() {
     fi
 
     box_bottom
-
-    # Hint line below box
-    printf "  %b\n" "${DIM}q:quit  s:skip  p:pause${NC}"
   )"
 
   # Single write: cursor home + frame + clear remaining lines
@@ -1253,23 +1220,7 @@ dashboard_countdown() {
       "0" "${ITERATION_TIMEOUT:-600}" "0" "${MAX_TOOL_CALLS:-50}" "" \
       "$(( $(date '+%s') - STARTED_EPOCH ))"
     render_dashboard "" "" 0
-    local key=""
-    read -rsn1 -t1 key 2>/dev/null || true
-    case "$key" in
-      q|Q) QUIT_REQUESTED=true; return 0 ;;
-      s|S) return 0 ;;
-      p|P)
-        while true; do
-          render_dashboard "" "" 0
-          local rkey=""
-          read -rsn1 -t1 rkey 2>/dev/null || true
-          case "$rkey" in
-            r|R) break ;;
-            q|Q) QUIT_REQUESTED=true; return 0 ;;
-          esac
-        done
-        ;;
-    esac
+    sleep 1
   done
 }
 
