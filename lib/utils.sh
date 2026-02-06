@@ -42,10 +42,10 @@ run_with_timeout() {
   local seconds="$1"
   shift
   if command -v gtimeout >/dev/null 2>&1; then
-    gtimeout "${seconds}" -- "$@"
+    gtimeout "${seconds}" "$@"
     return $?
   elif command -v timeout >/dev/null 2>&1; then
-    timeout "${seconds}" -- "$@"
+    timeout "${seconds}" "$@"
     return $?
   else
     # Perl fork+exec+waitpid with proper signal handling.
