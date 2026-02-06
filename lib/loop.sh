@@ -10,16 +10,6 @@ run_loop() {
   local iteration=1
 
   while true; do
-    # Check if quit was requested via keyboard shortcut
-    if [[ "${QUIT_REQUESTED:-false}" == "true" ]]; then
-      echo ""
-      hr_green
-      log_ok "${BOLD}Quit requested${NC}"
-      hr_green
-      set_smart_title "stopped" "" "$COMPLETED_COUNT" "$FAILED_COUNT" ""
-      break
-    fi
-
     # BUG FIX #14: Use break instead of exit 0 - let caller handle cleanup
     if [[ $MAX_ITERATIONS -gt 0 && $iteration -gt $MAX_ITERATIONS ]]; then
       echo ""
@@ -63,14 +53,6 @@ run_loop() {
       sleep "$WAIT_TIME"
     fi
 
-    # Check quit after countdown
-    if [[ "${QUIT_REQUESTED:-false}" == "true" ]]; then
-      echo ""
-      hr_green
-      log_ok "${BOLD}Quit requested${NC}"
-      hr_green
-      break
-    fi
   done
 
   show_run_summary
@@ -291,15 +273,7 @@ _run_parallel_dashboard() {
         "0" "$ITERATION_TIMEOUT" "0" "$MAX_TOOL_CALLS" "" "$run_elapsed"
       render_dashboard "" "" 0
 
-      # Check keyboard
-      local key=""
-      read -rsn1 -t2 key 2>/dev/null || true
-      case "$key" in
-        q|Q)
-          signal_exit
-          break
-          ;;
-      esac
+      sleep 2
     fi
   done
 

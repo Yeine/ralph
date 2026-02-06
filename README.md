@@ -158,16 +158,6 @@ Notes:
 - Use `--ascii` to force plain ASCII if your terminal does not support box drawing.
 - Progress bars, spinners, and history trails work in both Unicode and ASCII modes.
 
-## Keyboard Shortcuts
-
-During the countdown between iterations (and in dashboard mode):
-
-| Key | Action |
-|-----|--------|
-| `q` | Quit gracefully after current iteration |
-| `s` | Skip wait, start next iteration immediately |
-| `p` | Pause (then `r` to resume, `q` to quit) |
-
 ## Visual Features
 
 ### Progress Bars

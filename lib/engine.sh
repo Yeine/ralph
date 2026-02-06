@@ -121,7 +121,7 @@ run_engine() {
       fi
       run_with_timeout "$timeout_seconds" \
         claude "${claude_args[@]}" \
-          2>&1 \
+          </dev/null 2>&1 \
       | tee "$raw_jsonl" \
       | jq -r --unbuffered '
           if .message.content != null and (.message.content | type) == "array" then
