@@ -70,6 +70,7 @@ MAX_TOOL_CALLS=50       # Consider stuck if more than this without completing
 QUIET=false
 ENGINE="claude"
 CODEX_EXEC_FLAGS="--full-auto"
+CODEX_ARGS=()              # Repeatable --codex-flag entries (preferred over CODEX_EXEC_FLAGS)
 SHOW_QUOTE_EACH_ITERATION=true
 BELL_ON_COMPLETION=false
 BELL_ON_END=false
@@ -157,6 +158,7 @@ while [[ $# -gt 0 ]]; do
     -p|--prompt)    _require_arg "$@"; PROMPT_FILE="$2"; shift 2 ;;
     -e|--engine)    _require_arg "$@"; ENGINE="$2"; shift 2 ;;
     --codex-flags)  _require_arg "$@"; CODEX_EXEC_FLAGS="$2"; shift 2 ;;
+    --codex-flag)   _require_arg "$@"; CODEX_ARGS+=("$2"); shift 2 ;;
     -m|--max)       _require_arg "$@"; MAX_ITERATIONS="$2"; shift 2 ;;
     -w|--wait)      _require_arg "$@"; WAIT_TIME="$2"; shift 2 ;;
     -a|--attempts)  _require_arg "$@"; MAX_ATTEMPTS="$2"; shift 2 ;;

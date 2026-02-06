@@ -41,6 +41,7 @@ _common_setup() {
   export QUIET=false
   export ENGINE="claude"
   export CODEX_EXEC_FLAGS="--full-auto"
+  CODEX_ARGS=()
   export SHOW_QUOTE_EACH_ITERATION=true
   export BELL_ON_COMPLETION=false
   export BELL_ON_END=false

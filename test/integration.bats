@@ -312,3 +312,33 @@ EOF
   assert_output --partial "ARG:Write"
   refute_output --partial "ARG:Bash, Write"
 }
+
+# --- --codex-flag (repeatable) ---
+
+@test "ralph --codex-flag: forwards repeated flags as separate args to codex" {
+  local bin_dir="${TEST_TMPDIR}/bin"
+  mkdir -p "$bin_dir"
+  make_stub_codex "$bin_dir"
+
+  local record_file="${TEST_TMPDIR}/codex_record"
+  local prompt_file="${TEST_TMPDIR}/prompt.md"
+  printf "Test task\n" > "$prompt_file"
+
+  run env PATH="${bin_dir}:$PATH" CODEX_RECORD="$record_file" \
+    "${RALPH_ROOT}/bin/ralph" \
+    --prompt "$prompt_file" \
+    --engine "codex" \
+    --codex-flag "--full-auto" \
+    --codex-flag "--dangerously-auto-approve-everything" \
+    --max 1 \
+    --wait 0 \
+    --ui minimal
+  assert_success
+
+  run cat "$record_file"
+  assert_success
+  assert_output --partial "ARG:exec"
+  assert_output --partial "ARG:--full-auto"
+  assert_output --partial "ARG:--dangerously-auto-approve-everything"
+  assert_output --partial "ARG:--json"
+}

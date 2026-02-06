@@ -214,6 +214,7 @@ Options:
   -p, --prompt FILE      Prompt file to use (default: RALPH_TASK.md)
   -e, --engine ENGINE    AI engine: claude or codex (default: claude)
   --codex-flags FLAGS    Extra flags passed to \`codex exec\` (default: --full-auto)
+  --codex-flag FLAG      Repeatable: one flag per invocation (preserves quoting)
   -m, --max N            Max iterations, 0=unlimited (default: 0)
   -w, --wait N           Seconds between iterations (default: 5)
   -a, --attempts N       Max attempts before skipping task (default: 3)

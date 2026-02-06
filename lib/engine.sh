@@ -116,8 +116,12 @@ run_engine() {
 
     if [[ "$engine" == "codex" ]]; then
       local -a codex_args=()
-      if [[ -n "$codex_flags" ]]; then
-        # Split on whitespace to avoid eval and command injection.
+      # shellcheck disable=SC2153  # CODEX_ARGS is set in bin/ralph
+      if [[ ${#CODEX_ARGS[@]} -gt 0 ]]; then
+        # Prefer the repeatable --codex-flag array (preserves quoting)
+        codex_args=("${CODEX_ARGS[@]}")
+      elif [[ -n "$codex_flags" ]]; then
+        # Fallback: split the --codex-flags string on whitespace (simple split)
         read -r -a codex_args <<< "$codex_flags"
       fi
       # Codex path: JSONL output via --json, parsed with jq
