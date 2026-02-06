@@ -220,6 +220,7 @@ Options:
   -a, --attempts N       Max attempts before skipping task (default: 3)
   -t, --timeout N        Timeout per iteration in seconds (default: 600)
   --max-tools N          Max tool calls before considering stuck (default: 50)
+  --max-stall N          Auto-exit after N consecutive non-productive iterations (default: 3, 0=disable)
   -j, --workers N        Number of parallel workers (default: 1, max: 16)
   --allowed-tools LIST   Comma-separated allowedTools for claude (default: unrestricted)
   --disallowed-tools LIST Comma-separated disallowedTools for claude (default: none)

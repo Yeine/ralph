@@ -169,6 +169,70 @@ _make_prompt_file() {
   assert_equal "$(cat "$claim_marker")" "1"
 }
 
+# --- Stall detection ---
+
+@test "stall detection: _check_stall_exit returns true after 3 consecutive EMPTY" {
+  ITERATION_HISTORY=("OK" "EMPTY" "EMPTY" "EMPTY")
+  MAX_STALL_ITERATIONS=3
+  run _check_stall_exit
+  assert_success
+}
+
+@test "stall detection: _check_stall_exit returns true after 3 consecutive INFO" {
+  ITERATION_HISTORY=("OK" "INFO" "INFO" "INFO")
+  MAX_STALL_ITERATIONS=3
+  run _check_stall_exit
+  assert_success
+}
+
+@test "stall detection: _check_stall_exit returns true for mixed EMPTY and INFO" {
+  ITERATION_HISTORY=("OK" "EMPTY" "INFO" "EMPTY")
+  MAX_STALL_ITERATIONS=3
+  run _check_stall_exit
+  assert_success
+}
+
+@test "stall detection: _check_stall_exit returns false when recent OK exists" {
+  ITERATION_HISTORY=("EMPTY" "EMPTY" "OK" "EMPTY")
+  MAX_STALL_ITERATIONS=3
+  run _check_stall_exit
+  assert_failure
+}
+
+@test "stall detection: _check_stall_exit returns false when recent FAIL exists" {
+  ITERATION_HISTORY=("EMPTY" "EMPTY" "FAIL" "EMPTY")
+  MAX_STALL_ITERATIONS=3
+  run _check_stall_exit
+  assert_failure
+}
+
+@test "stall detection: _check_stall_exit returns false when not enough iterations" {
+  ITERATION_HISTORY=("EMPTY" "EMPTY")
+  MAX_STALL_ITERATIONS=3
+  run _check_stall_exit
+  assert_failure
+}
+
+@test "stall detection: disabled when MAX_STALL_ITERATIONS=0" {
+  ITERATION_HISTORY=("EMPTY" "EMPTY" "EMPTY" "EMPTY" "EMPTY")
+  MAX_STALL_ITERATIONS=0
+  run _check_stall_exit
+  assert_failure
+}
+
+@test "stall detection: custom threshold of 5" {
+  ITERATION_HISTORY=("OK" "EMPTY" "EMPTY" "EMPTY" "INFO")
+  MAX_STALL_ITERATIONS=5
+  run _check_stall_exit
+  assert_failure
+
+  ITERATION_HISTORY=("OK" "EMPTY" "EMPTY" "EMPTY" "INFO" "EMPTY")
+  run _check_stall_exit
+  assert_success
+}
+
+# --- run_iteration integration tests (continued) ---
+
 @test "run_iteration: ATTEMPT_FAILED increments attempts and skips at max" {
   local prompt_file
   prompt_file="$(_make_prompt_file)"

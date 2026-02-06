@@ -67,6 +67,7 @@ ATTEMPTS_FILE="${ATTEMPTS_FILE:-.ralph_attempts.json}"
 MAX_ATTEMPTS=3          # Skip task after this many failures
 ITERATION_TIMEOUT=600   # 10 minutes max per iteration
 MAX_TOOL_CALLS=50       # Consider stuck if more than this without completing
+MAX_STALL_ITERATIONS=3  # Auto-exit after N consecutive non-productive iterations (0=disabled)
 QUIET=false
 ENGINE="claude"
 CODEX_EXEC_FLAGS="--full-auto"
@@ -164,6 +165,7 @@ while [[ $# -gt 0 ]]; do
     -a|--attempts)  _require_arg "$@"; MAX_ATTEMPTS="$2"; shift 2 ;;
     -t|--timeout)   _require_arg "$@"; ITERATION_TIMEOUT="$2"; shift 2 ;;
     --max-tools)    _require_arg "$@"; MAX_TOOL_CALLS="$2"; shift 2 ;;
+    --max-stall)    _require_arg "$@"; MAX_STALL_ITERATIONS="$2"; shift 2 ;;
     -c|--caffeinate) USE_CAFFEINATE=true; shift ;;
     -q|--quiet)     QUIET=true; shift ;;
     --no-iter-quote) SHOW_QUOTE_EACH_ITERATION=false; shift ;;
@@ -231,7 +233,7 @@ if [[ "$LOG_FORMAT" != "text" && "$LOG_FORMAT" != "jsonl" ]]; then
   exit 1
 fi
 
-for _numvar_name in MAX_ITERATIONS WAIT_TIME MAX_ATTEMPTS ITERATION_TIMEOUT MAX_TOOL_CALLS NUM_WORKERS; do
+for _numvar_name in MAX_ITERATIONS WAIT_TIME MAX_ATTEMPTS ITERATION_TIMEOUT MAX_TOOL_CALLS MAX_STALL_ITERATIONS NUM_WORKERS; do
   _numvar_val="${!_numvar_name}"
   if ! [[ "$_numvar_val" =~ ^[0-9]+$ ]]; then
     log_err "${_numvar_name} must be a non-negative integer, got: $(sanitize_tty_text "$_numvar_val")"
@@ -375,6 +377,11 @@ if [[ "$UI_MODE" != "minimal" ]]; then
   printf "  %-16s %b\n" "Attempts:"   "${YELLOW}${MAX_ATTEMPTS}${NC}"
   printf "  %-16s %b\n" "Timeout:"    "${YELLOW}${timeout_display}${NC}"
   printf "  %-16s %b\n" "Max tools:"  "${YELLOW}${MAX_TOOL_CALLS}${NC}"
+  if [[ "$MAX_STALL_ITERATIONS" -gt 0 ]]; then
+    printf "  %-16s %b\n" "Max stall:"  "${YELLOW}${MAX_STALL_ITERATIONS}${NC}"
+  else
+    printf "  %-16s %b\n" "Max stall:"  "${DIM}disabled${NC}"
+  fi
   printf "  %-16s %b\n" "UI:"         "${CYAN}${UI_MODE}${NC}"
   printf "  %-16s %b\n" "Exit on done:"  "$([[ "$EXIT_ON_COMPLETE" == "true" ]] && echo "${GREEN}yes${NC}" || echo "${YELLOW}no (loop forever)${NC}")"
 

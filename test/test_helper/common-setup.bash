@@ -38,6 +38,7 @@ _common_setup() {
   export MAX_ATTEMPTS=3
   export ITERATION_TIMEOUT=600
   export MAX_TOOL_CALLS=50
+  export MAX_STALL_ITERATIONS=3
   export QUIET=false
   export ENGINE="claude"
   export CODEX_EXEC_FLAGS="--full-auto"

@@ -3,6 +3,27 @@
 # loop.sh - Main loop, parallel worker, and parallel coordinator
 
 # -----------------------------------------------------------------------------
+# Stall detection helper
+# -----------------------------------------------------------------------------
+# Check if the last N iterations were all non-productive (EMPTY or INFO).
+# Returns 0 (true) if stalled, 1 (false) otherwise.
+_check_stall_exit() {
+  local max_stall="${MAX_STALL_ITERATIONS:-3}"
+  [[ "$max_stall" -gt 0 ]] || return 1
+  local history_len=${#ITERATION_HISTORY[@]}
+  [[ "$history_len" -ge "$max_stall" ]] || return 1
+
+  local i status
+  for (( i = history_len - max_stall; i < history_len; i++ )); do
+    status="${ITERATION_HISTORY[$i]}"
+    if [[ "$status" == "OK" || "$status" == "FAIL" ]]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+# -----------------------------------------------------------------------------
 # Sequential main loop
 # -----------------------------------------------------------------------------
 run_loop() {
@@ -26,6 +47,20 @@ run_loop() {
     # BUG FIX #4: Handle special return codes from run_iteration
     if [[ "$rc" -eq 98 ]]; then
       # EXIT_SIGNAL with EXIT_ON_COMPLETE=true
+      break
+    fi
+
+    # Stall detection: auto-exit after N consecutive non-productive iterations
+    if _check_stall_exit; then
+      echo ""
+      hr_green
+      log_ok "${BOLD}Stall detected: ${MAX_STALL_ITERATIONS} consecutive non-productive iterations${NC}"
+      log_ok "${BOLD}All tasks may be complete (agent did not emit EXIT_SIGNAL)${NC}"
+      hr_green
+      set_smart_title "done" "" "$COMPLETED_COUNT" "$FAILED_COUNT" ""
+      log_event_jsonl "stall_exit" \
+        "consecutive" "$MAX_STALL_ITERATIONS" \
+        "iteration" "$iteration"
       break
     fi
 
@@ -119,6 +154,18 @@ run_worker() {
     # EXIT_SIGNAL detected (return code 99)
     if [[ $rc -eq 99 ]]; then
       printf '%s\n' "[W${worker_id}] EXIT_SIGNAL - all tasks complete."
+      break
+    fi
+
+    # Stall detection: auto-exit after N consecutive non-productive iterations
+    if _check_stall_exit; then
+      printf '%s\n' "[W${worker_id}] Stall detected: ${MAX_STALL_ITERATIONS} consecutive non-productive iterations."
+      log_event_jsonl "stall_exit" \
+        "consecutive" "$MAX_STALL_ITERATIONS" \
+        "iteration" "$iteration" \
+        "worker_id" "$worker_id"
+      signal_exit
+      clear_claim "$worker_id"
       break
     fi
 
