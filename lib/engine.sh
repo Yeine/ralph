@@ -79,6 +79,11 @@ run_engine() {
         printf '%s\n' "$line" >> "$output_file"
         [[ -n "$log_file" ]] && printf '%s\n' "$safe_line" >> "$log_file"
       fi
+
+      # Real-time claim update for parallel coordination
+      if [[ "$line" == "PICKING:"* && "${WORKER_ID:-0}" -gt 0 ]]; then
+        update_claim "$WORKER_ID" "${line#PICKING: }" 2>/dev/null || true
+      fi
     }
 
     if [[ "$engine" == "codex" ]]; then
