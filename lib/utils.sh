@@ -29,8 +29,8 @@ bell() {
   local event="${1:-}"
   is_tty || return 0
   case "$event" in
-    completion) [[ "${BELL_ON_COMPLETION:-false}" == "true" ]] && printf "\a" || true ;;
-    end)        [[ "${BELL_ON_END:-false}" == "true" ]] && printf "\a" || true ;;
+    completion) [[ "${BELL_ON_COMPLETION:-false}" == "true" ]] && printf "\a" ;;
+    end)        [[ "${BELL_ON_END:-false}" == "true" ]] && printf "\a" ;;
     *)          ;; # ignore unknown
   esac
 }

@@ -129,7 +129,7 @@ ${claims_block}
   # BUG FIX #10: Clean up temp files (and monitor) when function returns
   local _iter_tmp_files=("$output_file" "$raw_jsonl" "$pipe_rc_file" "$jq_rc_file")
   local _monitor_pid=""
-  # shellcheck disable=SC2329 # invoked by RETURN trap below
+  # shellcheck disable=SC2329,SC2317 # invoked by RETURN trap below
   _cleanup_iteration_tmp() {
     if [[ -n "${_monitor_pid:-}" ]]; then
       kill "$_monitor_pid" 2>/dev/null || true

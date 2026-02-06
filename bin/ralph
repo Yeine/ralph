@@ -515,7 +515,9 @@ cleanup() {
   bell end
 
   # Cleanup worker state dir
-  [[ -n "${WORKER_STATE_DIR:-}" && -d "${WORKER_STATE_DIR:-}" ]] && rm -rf "$WORKER_STATE_DIR" 2>/dev/null || true
+  if [[ -n "${WORKER_STATE_DIR:-}" && -d "${WORKER_STATE_DIR:-}" ]]; then
+    rm -rf "$WORKER_STATE_DIR" 2>/dev/null || true
+  fi
 
   exit 0
 }

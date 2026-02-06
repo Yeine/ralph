@@ -1002,7 +1002,9 @@ cleanup_dashboard() {
     tput cnorm 2>/dev/null || true                   # show cursor
     tput rmcup 2>/dev/null || printf "\033[?1049l"   # leave alternate screen buffer
   fi
-  [[ -n "${DASHBOARD_STATE_FILE:-}" ]] && rm -f "$DASHBOARD_STATE_FILE" 2>/dev/null || true
+  if [[ -n "${DASHBOARD_STATE_FILE:-}" ]]; then
+    rm -f "$DASHBOARD_STATE_FILE" 2>/dev/null || true
+  fi
 }
 
 # Write current state for dashboard renderer
