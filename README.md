@@ -54,6 +54,9 @@ Ralph will loop: pick a task, execute it, wait, repeat. Press `Ctrl+C` to stop.
 ```
 ralph [options]
 
+Commands:
+  help                   Show help
+
 Options:
   -p, --prompt FILE      Prompt file to use (default: RALPH_TASK.md)
   -e, --engine ENGINE    AI engine: claude or codex (default: claude)
@@ -124,7 +127,7 @@ ralph --clear-attempts
 ## UI Modes
 
 ### Full (default)
-Rich output with box-drawn banners, progress bars, spinners, status lines, and result cards. Best for interactive terminal use.
+Rich output with box-drawn banners, spinners, live status line with progress bars, and result cards. Best for interactive terminal use.
 
 ```bash
 ralph --ui full
@@ -168,7 +171,7 @@ During the countdown between iterations (and in dashboard mode):
 ## Visual Features
 
 ### Progress Bars
-Time elapsed and tool call counts display as color-coded gauges that transition green to yellow to red as thresholds approach:
+The live status line and dashboard display color-coded gauges for time elapsed and tool call counts, transitioning green to yellow to red as thresholds approach:
 
 ```
 [████████████░░░░░░░░] 58%  348s/600s
@@ -224,7 +227,7 @@ Supports:
 With `--log-format jsonl`, events are logged as JSON lines for post-run analysis:
 
 ```json
-{"ts":"2024-01-15T14:23:45Z","event":"iteration_end","iteration":12,"status":"OK","task":"auth","elapsed":142,"tools":28}
+{"ts":"2025-06-15T14:23:45Z","event":"iteration_end","iteration":12,"status":"OK","task":"auth","elapsed":142,"tools":28}
 ```
 
 Events logged: `run_start`, `iteration_start`, `iteration_end`, `task_skipped`, `run_end`.
