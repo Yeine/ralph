@@ -14,14 +14,6 @@ teardown() { _common_teardown; }
   assert_failure
 }
 
-# --- set_title ---
-
-@test "set_title: no output when disabled" {
-  ENABLE_TITLE=false run set_title "hello"
-  assert_success
-  assert_output ""
-}
-
 # --- bell ---
 
 @test "bell: no output for unknown event" {

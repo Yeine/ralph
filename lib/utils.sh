@@ -23,13 +23,6 @@ pad_right() {
   printf "%-*s" "$width" "$s"
 }
 
-# Terminal title (OSC 0)
-set_title() {
-  [[ "${ENABLE_TITLE:-true}" == "true" ]] || return 0
-  is_tty || return 0
-  printf "\033]0;%s\007" "$*"
-}
-
 # Bell sound (alerts user if terminal is backgrounded)
 # Usage: bell completion  OR  bell end
 bell() {
