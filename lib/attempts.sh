@@ -1,37 +1,43 @@
 #!/usr/bin/env bash
 # attempts.sh - JSON-based attempt tracking for failed tasks
 
-init_attempts_file() {
-  [[ -f "${ATTEMPTS_FILE:-}" ]] && return 0
+# Helper: acquire lock, ensure file exists, apply jq transform, release lock.
+# Usage: _atomic_update_attempts <jq_filter> [jq_args...]
+# Pass an empty filter "" to skip the jq step (used by init/clear to just ensure file exists).
+_atomic_update_attempts() {
+  local jq_filter="$1"; shift
   local lock_name="${ATTEMPTS_FILE}.lck"
   acquire_lock "$lock_name" || { log_err "Could not acquire lock for attempts"; return 1; }
   if [[ ! -f "$ATTEMPTS_FILE" ]]; then
+    local init_tmp
+    init_tmp="$(mktemp "${TMPDIR:-/tmp}/ralph_attempts.XXXXXX")" || { log_err "Failed to create temp file for attempts"; release_lock "$lock_name"; return 1; }
+    printf "%s\n" "{}" > "$init_tmp"
+    if ! mv "$init_tmp" "$ATTEMPTS_FILE"; then
+      rm -f "$init_tmp"; release_lock "$lock_name"
+      log_err "Failed to initialize attempts file: $ATTEMPTS_FILE"; return 1
+    fi
+  fi
+  if [[ -n "$jq_filter" ]]; then
     local tmp_file
     tmp_file="$(mktemp "${TMPDIR:-/tmp}/ralph_attempts.XXXXXX")" || { log_err "Failed to create temp file for attempts"; release_lock "$lock_name"; return 1; }
-    printf "%s\n" "{}" > "$tmp_file"
-    if ! mv "$tmp_file" "$ATTEMPTS_FILE"; then
-      rm -f "$tmp_file"
-      release_lock "$lock_name"
-      log_err "Failed to initialize attempts file: $ATTEMPTS_FILE"
-      return 1
+    if jq "$jq_filter" "$@" "$ATTEMPTS_FILE" > "$tmp_file"; then
+      if mv "$tmp_file" "$ATTEMPTS_FILE"; then
+        release_lock "$lock_name"; return 0
+      fi
     fi
+    rm -f "$tmp_file"; release_lock "$lock_name"
+    log_err "Failed to update attempts file: $ATTEMPTS_FILE"; return 1
   fi
   release_lock "$lock_name"
 }
 
+init_attempts_file() {
+  [[ -f "${ATTEMPTS_FILE:-}" ]] && return 0
+  _atomic_update_attempts ""
+}
+
 clear_attempts() {
-  local lock_name="${ATTEMPTS_FILE}.lck"
-  acquire_lock "$lock_name" || { log_err "Could not acquire lock for attempts"; return 1; }
-  local tmp_file
-  tmp_file="$(mktemp "${TMPDIR:-/tmp}/ralph_attempts.XXXXXX")" || { log_err "Failed to create temp file for attempts"; release_lock "$lock_name"; return 1; }
-  printf "%s\n" "{}" > "$tmp_file"
-  if ! mv "$tmp_file" "$ATTEMPTS_FILE"; then
-    rm -f "$tmp_file"
-    release_lock "$lock_name"
-    log_err "Failed to clear attempts file: $ATTEMPTS_FILE"
-    return 1
-  fi
-  release_lock "$lock_name"
+  _atomic_update_attempts '{}'
 }
 
 get_attempts() {
@@ -45,45 +51,20 @@ increment_attempts() {
   local task="$1"
   local key
   key="$(task_hash "$task")"
-  local current new_count now tmp_file
-  local lock_name="${ATTEMPTS_FILE}.lck"
-
-  acquire_lock "$lock_name" || { log_err "Could not acquire lock for attempts"; return 1; }
-  if [[ ! -f "$ATTEMPTS_FILE" ]]; then
-    tmp_file="$(mktemp "${TMPDIR:-/tmp}/ralph_attempts.XXXXXX")" || { log_err "Failed to create temp file for attempts"; release_lock "$lock_name"; return 1; }
-    printf "%s\n" "{}" > "$tmp_file"
-    if ! mv "$tmp_file" "$ATTEMPTS_FILE"; then
-      rm -f "$tmp_file"
-      release_lock "$lock_name"
-      log_err "Failed to initialize attempts file: $ATTEMPTS_FILE"
-      return 1
-    fi
-  fi
+  local current new_count now
   current="$(get_attempts "$task")"
   new_count=$((current + 1))
   now="$(date '+%Y-%m-%d %H:%M:%S')"
-  tmp_file="$(mktemp "${TMPDIR:-/tmp}/ralph_attempts.XXXXXX")" || { log_err "Failed to create temp file for attempts"; release_lock "$lock_name"; return 1; }
 
-  if jq --arg key "$key" --arg task "$task" --arg now "$now" --argjson n "$new_count" '
-    .[$key] = (.[$key] // {})
+  # shellcheck disable=SC2016
+  _atomic_update_attempts \
+    '.[$key] = (.[$key] // {})
     | .[$key].task = $task
     | .[$key].attempts = $n
     | .[$key].skipped = (.[$key].skipped // false)
-    | .[$key].updated = $now
-  ' "$ATTEMPTS_FILE" > "$tmp_file"; then
-    if ! mv "$tmp_file" "$ATTEMPTS_FILE"; then
-      rm -f "$tmp_file"
-      release_lock "$lock_name"
-      log_err "Failed to write attempts file: $ATTEMPTS_FILE"
-      return 1
-    fi
-  else
-    rm -f "$tmp_file"
-    release_lock "$lock_name"
-    log_err "Failed to update attempts file: $ATTEMPTS_FILE"
-    return 1
-  fi
-  release_lock "$lock_name"
+    | .[$key].updated = $now' \
+    --arg key "$key" --arg task "$task" --arg now "$now" --argjson n "$new_count" \
+    || return 1
 
   echo "$new_count"
 }
@@ -92,33 +73,17 @@ mark_skipped() {
   local task="$1"
   local key
   key="$(task_hash "$task")"
-  local now tmp_file
-  local lock_name="${ATTEMPTS_FILE}.lck"
-
-  acquire_lock "$lock_name" || { log_err "Could not acquire lock for attempts"; return 1; }
+  local now
   now="$(date '+%Y-%m-%d %H:%M:%S')"
-  tmp_file="$(mktemp "${TMPDIR:-/tmp}/ralph_attempts.XXXXXX")" || { log_err "Failed to create temp file for attempts"; release_lock "$lock_name"; return 1; }
 
-  if jq --arg key "$key" --arg task "$task" --arg now "$now" '
-    .[$key] = (.[$key] // {})
+  # shellcheck disable=SC2016
+  _atomic_update_attempts \
+    '.[$key] = (.[$key] // {})
     | .[$key].task = $task
     | .[$key].skipped = true
     | .[$key].updated = $now
-    | .[$key].attempts = ((.[$key].attempts // 0) | if type == "number" then . else 0 end)
-  ' "$ATTEMPTS_FILE" > "$tmp_file"; then
-    if ! mv "$tmp_file" "$ATTEMPTS_FILE"; then
-      rm -f "$tmp_file"
-      release_lock "$lock_name"
-      log_err "Failed to write attempts file: $ATTEMPTS_FILE"
-      return 1
-    fi
-  else
-    rm -f "$tmp_file"
-    release_lock "$lock_name"
-    log_err "Failed to update attempts file: $ATTEMPTS_FILE"
-    return 1
-  fi
-  release_lock "$lock_name"
+    | .[$key].attempts = ((.[$key].attempts // 0) | if type == "number" then . else 0 end)' \
+    --arg key "$key" --arg task "$task" --arg now "$now"
 }
 
 get_skipped_tasks() {
