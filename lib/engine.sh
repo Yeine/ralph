@@ -2,6 +2,27 @@
 # shellcheck disable=SC2034  # Variables are used across sourced lib files
 # engine.sh - Claude/Codex execution and JSONL parsing
 
+# Convert a comma-separated list into individual array elements.
+# Trims leading/trailing whitespace per element. Ignores empty elements.
+# Result is stored in global _CSV_RESULT array.
+# Usage: _csv_to_args "Read, Bash(git log *),Edit"
+#        => _CSV_RESULT=("Read" "Bash(git log *)" "Edit")
+_csv_to_args() {
+  local csv="$1"
+  _CSV_RESULT=()
+  local IFS=','
+  local item trimmed
+  # shellcheck disable=SC2086
+  for item in $csv; do
+    # Trim leading whitespace
+    trimmed="${item#"${item%%[![:space:]]*}"}"
+    # Trim trailing whitespace
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    [[ -z "$trimmed" ]] && continue
+    _CSV_RESULT+=("$trimmed")
+  done
+}
+
 # Count tool_use events from Claude stream-json JSONL output
 count_tool_calls_from_jsonl() {
   local jsonl_file="$1"
@@ -128,10 +149,16 @@ run_engine() {
       # Claude path: stream-json output parsed via jq
       local claude_args=(-p "$prompt_content" --verbose --output-format stream-json)
       if [[ -n "${ALLOWED_TOOLS:-}" ]]; then
-        claude_args+=(--allowedTools "$ALLOWED_TOOLS")
+        _csv_to_args "$ALLOWED_TOOLS"
+        for _tool in "${_CSV_RESULT[@]}"; do
+          claude_args+=(--allowedTools "$_tool")
+        done
       fi
       if [[ -n "${DISALLOWED_TOOLS:-}" ]]; then
-        claude_args+=(--disallowedTools "$DISALLOWED_TOOLS")
+        _csv_to_args "$DISALLOWED_TOOLS"
+        for _tool in "${_CSV_RESULT[@]}"; do
+          claude_args+=(--disallowedTools "$_tool")
+        done
       fi
       run_with_timeout "$timeout_seconds" \
         claude "${claude_args[@]}" \

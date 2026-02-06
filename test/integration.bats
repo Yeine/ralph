@@ -17,6 +17,14 @@ make_stub_claude() {
   local bin_dir="$1"
   cat > "${bin_dir}/claude" <<'EOF'
 #!/usr/bin/env bash
+record_file="${CLAUDE_RECORD:-}"
+if [[ -n "$record_file" ]]; then
+  {
+    for arg in "$@"; do
+      printf 'ARG:%s\n' "$arg"
+    done
+  } > "$record_file"
+fi
 cat <<'JSON'
 {"result":"EXIT_SIGNAL: true"}
 JSON
@@ -244,4 +252,63 @@ EOF
   assert_output --partial "ARG:${prompt_file}"
   refute_output --partial "ARG:--caffeinate"
   refute_output --partial "ARG:-c"
+}
+
+# --- --allowed-tools forwarding ---
+
+@test "ralph --allowed-tools: forwards comma-separated tools as separate args" {
+  local bin_dir="${TEST_TMPDIR}/bin"
+  mkdir -p "$bin_dir"
+  make_stub_claude "$bin_dir"
+
+  local record_file="${TEST_TMPDIR}/claude_record"
+  local prompt_file="${TEST_TMPDIR}/prompt.md"
+  printf "Test task\n" > "$prompt_file"
+
+  run env PATH="${bin_dir}:$PATH" CLAUDE_RECORD="$record_file" \
+    "${RALPH_ROOT}/bin/ralph" \
+    --prompt "$prompt_file" \
+    --engine "claude" \
+    --allowed-tools "Read, Bash(git log *),Edit" \
+    --max 1 \
+    --wait 0 \
+    --ui minimal
+  assert_success
+
+  run cat "$record_file"
+  assert_success
+  # Each tool should appear as its own ARG after --allowedTools
+  assert_output --partial "ARG:--allowedTools"
+  assert_output --partial "ARG:Read"
+  assert_output --partial "ARG:Bash(git log *)"
+  assert_output --partial "ARG:Edit"
+  # Should NOT contain the full comma-separated string as a single arg
+  refute_output --partial "ARG:Read, Bash(git log *),Edit"
+}
+
+@test "ralph --disallowed-tools: forwards comma-separated tools as separate args" {
+  local bin_dir="${TEST_TMPDIR}/bin"
+  mkdir -p "$bin_dir"
+  make_stub_claude "$bin_dir"
+
+  local record_file="${TEST_TMPDIR}/claude_record"
+  local prompt_file="${TEST_TMPDIR}/prompt.md"
+  printf "Test task\n" > "$prompt_file"
+
+  run env PATH="${bin_dir}:$PATH" CLAUDE_RECORD="$record_file" \
+    "${RALPH_ROOT}/bin/ralph" \
+    --prompt "$prompt_file" \
+    --engine "claude" \
+    --disallowed-tools "Bash, Write" \
+    --max 1 \
+    --wait 0 \
+    --ui minimal
+  assert_success
+
+  run cat "$record_file"
+  assert_success
+  assert_output --partial "ARG:--disallowedTools"
+  assert_output --partial "ARG:Bash"
+  assert_output --partial "ARG:Write"
+  refute_output --partial "ARG:Bash, Write"
 }
