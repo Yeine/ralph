@@ -35,6 +35,9 @@ UI_BOX_BR="╯"
 UI_BOX_ML="├"
 UI_BOX_MR="┤"
 UI_ELLIPSIS="…"
+UI_SYM_OK="✓"
+UI_SYM_FAIL="✗"
+UI_SYM_SKIP="⊘"
 
 # Spinner frames
 SPINNER_FRAMES_UNICODE=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
@@ -96,6 +99,9 @@ setup_ui_charset() {
     UI_BOX_ML="+"
     UI_BOX_MR="+"
     UI_ELLIPSIS="..."
+    UI_SYM_OK="+"
+    UI_SYM_FAIL="x"
+    UI_SYM_SKIP="o"
   else
     UI_USE_ASCII=false
     UI_HR_CHAR="─"
@@ -108,6 +114,9 @@ setup_ui_charset() {
     UI_BOX_ML="├"
     UI_BOX_MR="┤"
     UI_ELLIPSIS="…"
+    UI_SYM_OK="✓"
+    UI_SYM_FAIL="✗"
+    UI_SYM_SKIP="⊘"
   fi
 }
 
@@ -383,7 +392,6 @@ render_progress_bar() {
 }
 
 # Compact progress bar (no brackets, for inline use)
-# Compact progress bar (no brackets, for inline use)
 # Optional 4th arg: "inverted" to use inverted color scale (high=good)
 render_progress_bar_compact() {
   local current="$1" max="$2" width="${3:-15}" color_mode="${4:-normal}"
@@ -559,6 +567,7 @@ reapply_scroll_region() { :; }
 # Compact inline status line (called periodically by the monitor).
 # Overwrites in-place via \r\033[K so progress bars animate.
 print_status_line() {
+  is_tty || return 0
   local elapsed_sec="$1" iter_timeout="$2"
   local tool_count="$3" max_tools="$4"
   local picked_task="$5"
@@ -675,19 +684,12 @@ print_iteration_summary_line() {
   task_safe="$(sanitize_tty_text "$task_display")"
   failure_safe="$(sanitize_tty_text "$failure_reason")"
 
-  local sym_ok sym_fail
-  if [[ "$UI_USE_ASCII" == "true" ]]; then
-    sym_ok="+"; sym_fail="x"
-  else
-    sym_ok="✓"; sym_fail="✗"
-  fi
-
   case "$status" in
     OK)
-      printf "  %b\n" "${GREEN}${sym_ok}${NC}  Completed ${WHITE}${task_safe}${NC} in ${CYAN}${iter_elapsed_fmt}${NC} ${DIM}(${tool_count} tool calls)${NC}"
+      printf "  %b\n" "${GREEN}${UI_SYM_OK}${NC}  Completed ${WHITE}${task_safe}${NC} in ${CYAN}${iter_elapsed_fmt}${NC} ${DIM}(${tool_count} tool calls)${NC}"
       ;;
     FAIL)
-      printf "  %b\n" "${RED}${sym_fail}${NC}  Failed ${WHITE}${task_safe}${NC} after ${CYAN}${iter_elapsed_fmt}${NC}: ${RED}${failure_safe}${NC}"
+      printf "  %b\n" "${RED}${UI_SYM_FAIL}${NC}  Failed ${WHITE}${task_safe}${NC} after ${CYAN}${iter_elapsed_fmt}${NC}: ${RED}${failure_safe}${NC}"
       ;;
     EMPTY)
       printf "  %b\n" "${YELLOW}!${NC}  Empty iteration ${DIM}(no tools, no changes, no task picked)${NC}"
@@ -779,16 +781,9 @@ print_iteration_result_card() {
   echo ""
   hr
 
-  local sym_ok sym_fail
-  if [[ "$UI_USE_ASCII" == "true" ]]; then
-    sym_ok="+"; sym_fail="x"
-  else
-    sym_ok="✓"; sym_fail="✗"
-  fi
-
   case "$status" in
     OK)
-      printf "  %b\n" "${GREEN}${sym_ok}${NC}  Completed ${WHITE}${task_safe}${NC} in ${CYAN}${iter_elapsed_fmt}${NC} ${DIM}(${tool_count} tool calls)${NC}"
+      printf "  %b\n" "${GREEN}${UI_SYM_OK}${NC}  Completed ${WHITE}${task_safe}${NC} in ${CYAN}${iter_elapsed_fmt}${NC} ${DIM}(${tool_count} tool calls)${NC}"
       ;;
     EMPTY)
       printf "  %b\n" "${YELLOW}!${NC}  Empty iteration ${DIM}(no tools, no changes, no task picked)${NC}"
@@ -852,7 +847,11 @@ log_event_jsonl() {
   local json="{\"ts\":\"${ts}\",\"event\":\"${event}\""
   while [[ $# -ge 2 ]]; do
     local key="$1" val="$2"; shift 2
-    val="${val//\"/\\\"}"
+    val="${val//\\/\\\\}"       # escape backslashes first
+    val="${val//\"/\\\"}"        # then quotes
+    val="${val//$'\n'/\\n}"      # newlines
+    val="${val//$'\r'/\\r}"      # carriage returns
+    val="${val//$'\t'/\\t}"      # tabs
     if [[ "$val" =~ ^[0-9]+$ ]]; then
       json+=",\"${key}\":${val}"
     else
@@ -875,16 +874,9 @@ set_smart_title() {
   local failed="${4:-0}"
   local task="${5:-}"
 
-  local sym_ok sym_fail
-  if [[ "$UI_USE_ASCII" == "true" ]]; then
-    sym_ok="+"; sym_fail="x"
-  else
-    sym_ok="✓"; sym_fail="✗"
-  fi
-
   local title="Ralph"
   if [[ -n "$iteration" ]]; then
-    title+=" ${sym_ok}${completed} ${sym_fail}${failed} | #${iteration}"
+    title+=" ${UI_SYM_OK}${completed} ${UI_SYM_FAIL}${failed} | #${iteration}"
   fi
 
   case "$state" in
@@ -921,24 +913,17 @@ render_worker_panel() {
   [[ "${NUM_WORKERS:-1}" -gt 1 ]] || return 0
   [[ -n "${WORKER_STATE_DIR:-}" && -d "${WORKER_STATE_DIR:-}" ]] || return 0
 
-  local sym_ok sym_fail
-  if [[ "$UI_USE_ASCII" == "true" ]]; then
-    sym_ok="+"; sym_fail="x"
-  else
-    sym_ok="✓"; sym_fail="✗"
-  fi
-
   echo ""
   printf "  %b\n" "${BOLD}Workers${NC}"
   local i
   for i in $(seq 1 "$NUM_WORKERS"); do
-    local line="" wc=0 wf=0
+    local line="" wcc=0 wff=0
     local counters_file="${WORKER_STATE_DIR}/w${i}.counters"
     if [[ -f "$counters_file" ]]; then
       IFS= read -r line < "$counters_file" 2>/dev/null || true
       if [[ "$line" =~ ^COMPLETED=([0-9]+)[[:space:]]+FAILED=([0-9]+) ]]; then
-        wc="${BASH_REMATCH[1]}"
-        wf="${BASH_REMATCH[2]}"
+        wcc="${BASH_REMATCH[1]}"
+        wff="${BASH_REMATCH[2]}"
       fi
     fi
 
@@ -971,8 +956,8 @@ render_worker_panel() {
     printf "  %b %-4b %b %b %b\n" \
       "${CYAN}W${i}${NC}" \
       "${status_color}${status_label}${NC}" \
-      "${GREEN}${sym_ok}${wc}${NC}" \
-      "${RED}${sym_fail}${wf}${NC}" \
+      "${GREEN}${UI_SYM_OK}${wcc}${NC}" \
+      "${RED}${UI_SYM_FAIL}${wff}${NC}" \
       "${DIM}${task}${NC}"
   done
 }
@@ -1151,16 +1136,9 @@ render_dashboard() {
     box_line ""
 
     # Counters + health + rate
-    local sym_ok sym_fail sym_skip
-    if [[ "$UI_USE_ASCII" == "true" ]]; then
-      sym_ok="+"; sym_fail="x"; sym_skip="o"
-    else
-      sym_ok="✓"; sym_fail="✗"; sym_skip="⊘"
-    fi
-
     local health_bar
     health_bar="$(render_progress_bar_compact "$health_pct" 100 10 inverted)"
-    box_line "${GREEN}${sym_ok} ${_DASH_COMPLETED} completed${NC}   ${RED}${sym_fail} ${_DASH_FAILED} failed${NC}   ${YELLOW}${sym_skip} ${_DASH_SKIPPED} skipped${NC}"
+    box_line "${GREEN}${UI_SYM_OK} ${_DASH_COMPLETED} completed${NC}   ${RED}${UI_SYM_FAIL} ${_DASH_FAILED} failed${NC}   ${YELLOW}${UI_SYM_SKIP} ${_DASH_SKIPPED} skipped${NC}"
     box_line "${DIM}Rate:${NC} ${CYAN}${rate_display}${NC}   ${DIM}Health:${NC} ${health_bar} ${DIM}${health_pct}%${NC}"
 
     # History trail
@@ -1197,7 +1175,7 @@ render_dashboard() {
             fi
           fi
         fi
-        box_line "${CYAN}W${i}${NC} ${wstatus} ${GREEN}${sym_ok}${wcc}${NC} ${RED}${sym_fail}${wff}${NC} ${DIM}${wtask}${NC}"
+        box_line "${CYAN}W${i}${NC} ${wstatus} ${GREEN}${UI_SYM_OK}${wcc}${NC} ${RED}${UI_SYM_FAIL}${wff}${NC} ${DIM}${wtask}${NC}"
       done
     fi
 
@@ -1226,7 +1204,7 @@ render_dashboard() {
   )"
 
   # Single write: cursor home + frame + clear remaining lines
-  printf '\033[H%b\033[J' "$_frame"
+  is_tty && printf '\033[H%b\033[J' "$_frame"
 }
 
 # Dashboard countdown (replaces wait_with_countdown in dashboard mode)
