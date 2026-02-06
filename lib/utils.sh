@@ -47,23 +47,39 @@ run_with_timeout() {
     timeout "${seconds}" -- "$@"
     return $?
   else
-    # Perl fork+exec+waitpid with proper signal handling
+    # Perl fork+exec+waitpid with proper signal handling.
+    # Child runs in its own process group so we can kill the entire group
+    # on timeout (catches grandchildren that would otherwise survive).
     perl -e '
-      use POSIX ":sys_wait_h";
+      use POSIX qw(:sys_wait_h setpgid);
       my $timeout = shift @ARGV;
       my $pid = fork();
       if (!defined $pid) { die "fork failed: $!" }
-      if ($pid == 0) { exec @ARGV; die "exec failed: $!" }
+      if ($pid == 0) {
+        setpgid(0, 0);   # new process group
+        exec @ARGV;
+        die "exec failed: $!";
+      }
+      # Ensure child has its own pgid before we might need to kill it
+      eval { setpgid($pid, $pid) };
+
+      my $kill_group = sub {
+        my ($sig) = @_;
+        kill $sig, -$pid;           # signal entire process group
+        select(undef, undef, undef, 0.5);  # 0.5s grace
+        kill "KILL", -$pid;         # force-kill survivors
+        waitpid($pid, WNOHANG);
+      };
+
       eval {
-        local $SIG{ALRM} = sub { kill "TERM", $pid; die "timeout\n" };
-        local $SIG{INT}  = sub { kill "INT",  $pid; waitpid($pid, WNOHANG); exit 130; };
-        local $SIG{TERM} = sub { kill "TERM", $pid; waitpid($pid, WNOHANG); exit 143; };
+        local $SIG{ALRM} = sub { $kill_group->("TERM"); die "timeout\n" };
+        local $SIG{INT}  = sub { $kill_group->("INT");  exit 130; };
+        local $SIG{TERM} = sub { $kill_group->("TERM"); exit 143; };
         alarm $timeout;
         waitpid($pid, 0);
         alarm 0;
       };
       if ($@ && $@ eq "timeout\n") {
-        waitpid($pid, WNOHANG);
         exit 124;
       }
       exit ($? >> 8);
