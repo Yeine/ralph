@@ -839,27 +839,45 @@ notify() {
 # -----------------------------------------------------------------------------
 # Structured JSONL event logging
 # -----------------------------------------------------------------------------
+RALPH_LOG_SCHEMA_VERSION=1
+
 log_event_jsonl() {
   [[ "${LOG_FORMAT:-text}" == "jsonl" && -n "${LOG_FILE:-}" ]] || return 0
   local event="$1"; shift
   local ts
   ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S')"
-  local json="{\"ts\":\"${ts}\",\"event\":\"${event}\""
+
+  # Build jq args for safe JSON encoding
+  local -a jq_args=(
+    --arg ts "$ts"
+    --arg event "$event"
+    --argjson schema_version "$RALPH_LOG_SCHEMA_VERSION"
+    --arg run_id "${RUN_ID:-}"
+    --arg engine "${ENGINE:-}"
+  )
+  # shellcheck disable=SC2016  # Dollar signs are jq variable references, not shell
+  local jq_expr='{ts: $ts, event: $event, schema_version: $schema_version, run_id: $run_id, engine: $engine'
+
+  if [[ -n "${WORKER_ID:-}" && "${WORKER_ID:-0}" -gt 0 ]]; then
+    jq_args+=(--argjson worker_id "$WORKER_ID")
+    # shellcheck disable=SC2016
+    jq_expr+=', worker_id: $worker_id'
+  fi
+
+  # Add extra key/value pairs
   while [[ $# -ge 2 ]]; do
     local key="$1" val="$2"; shift 2
-    val="${val//\\/\\\\}"       # escape backslashes first
-    val="${val//\"/\\\"}"        # then quotes
-    val="${val//$'\n'/\\n}"      # newlines
-    val="${val//$'\r'/\\r}"      # carriage returns
-    val="${val//$'\t'/\\t}"      # tabs
     if [[ "$val" =~ ^[0-9]+$ ]]; then
-      json+=",\"${key}\":${val}"
+      jq_args+=(--argjson "$key" "$val")
     else
-      json+=",\"${key}\":\"${val}\""
+      jq_args+=(--arg "$key" "$val")
     fi
+    # Use quoted key in jq expression: ("key"): $key
+    jq_expr+=", (\"$key\"): \$$key"
   done
-  json+="}"
-  printf '%s\n' "$json" >> "$LOG_FILE"
+  jq_expr+='}'
+
+  jq -n -c "${jq_args[@]}" "$jq_expr" >> "$LOG_FILE"
 }
 
 # -----------------------------------------------------------------------------
