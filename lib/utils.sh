@@ -215,14 +215,16 @@ Options:
   --disallowed-tools LIST Comma-separated disallowedTools for claude (default: none)
   -c, --caffeinate       Prevent Mac from sleeping
   -l, --log [FILE]       Log output to file (default: ralph_TIMESTAMP.log)
+  --log-format FORMAT    Log format: text or jsonl (default: text)
   -q, --quiet            Reduce output (keep banners + summaries)
-  --ui MODE              UI mode: full, compact, minimal (compact/minimal imply --quiet)
+  --ui MODE              UI mode: full, compact, minimal, dashboard
   --no-logo              Disable the ASCII logo header
   --no-status-line       Disable periodic status line updates
   --ascii                Force ASCII UI (no box-drawing)
   --no-iter-quote        Don't repeat a quote each iteration
   --bell-on-completion   Bell sound when iteration completes
   --bell-on-end          Bell sound when run ends (exit, max iter, Ctrl+C)
+  --notify               Enable OS notifications (macOS/Linux/tmux)
   --no-exit-on-complete  Don't exit when EXIT_SIGNAL detected (keep looping)
   --no-title             Disable terminal title updates
   --no-resources         Disable docker resources section
@@ -231,17 +233,27 @@ Options:
   --clear-attempts       Clear all attempt tracking (fresh start)
   -h, --help             Show this help
 
+UI modes:
+  full       Rich output: banners, progress bars, status lines (default)
+  compact    One-line summaries per iteration (implies --quiet)
+  minimal    Near-silent, essential output only (implies --quiet)
+  dashboard  Live auto-refreshing terminal dashboard with progress bars
+
+Keyboard shortcuts (during wait countdown / dashboard):
+  q  Quit gracefully after current iteration
+  s  Skip wait, start next iteration immediately
+  p  Pause (press r to resume, q to quit)
+
 Examples:
-  ralph
+  ralph                         # Basic usage
+  ralph --ui dashboard          # Live dashboard mode
   ralph -j 3                    # 3 parallel workers
-  ralph -j 2 --max 5            # 2 workers, max 5 iterations each
-  ralph --engine codex
-  ralph -e codex --codex-flags "--full-auto"
+  ralph -j 2 --ui dashboard     # Dashboard with parallel workers
+  ralph --notify                # OS notifications on completion
+  ralph --log --log-format jsonl # Structured event logging
   ralph -p my-task.md
   ralph --max 10 --wait 3
   ralph --caffeinate
-  ralph --log
-  ralph --log my-run.log
   ralph --clear-attempts
 
 EOF

@@ -57,6 +57,8 @@ run_engine() {
       local safe_line
       safe_line="$(sanitize_tty_text "$line")"
       if [[ "$quiet" == "false" ]]; then
+        # Clear any in-place status line before printing engine output
+        clear_status_line
         if [[ "$line" == ">>> "* ]]; then
           # Tool-call announcements: compact dim format
           printf "%b\n" "${DIM}${safe_line}${NC}"

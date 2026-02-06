@@ -27,11 +27,22 @@ run_iteration() {
   local time_short
   time_short="$(date '+%H:%M:%S')"
 
-  set_title "RALPH LOOP | iter ${iteration} | running..."
+  local run_elapsed
+  run_elapsed=$(( iter_started_epoch - STARTED_EPOCH ))
+
+  set_smart_title "running" "$iteration" "$COMPLETED_COUNT" "$FAILED_COUNT" ""
 
   local quiet_for_engine="$QUIET"
   if [[ "${UI_MODE:-full}" != "full" ]]; then
     quiet_for_engine=true
+  fi
+
+  # Write dashboard state before engine launch
+  if [[ "${UI_MODE:-full}" == "dashboard" ]]; then
+    write_dashboard_state "$iteration" "RUNNING" "" \
+      "$COMPLETED_COUNT" "$FAILED_COUNT" "$skipped_count" \
+      0 "$ITERATION_TIMEOUT" 0 "$MAX_TOOL_CALLS" "$iter_quote" "$run_elapsed"
+    render_dashboard "" "" 0
   fi
 
   # Print iteration start banner (normal output, no cursor tricks)
@@ -39,7 +50,7 @@ run_iteration() {
     echo ""
     render_dynamic_banner "$iteration" "$time_short" "$iter_quote" "RUNNING" \
       "$COMPLETED_COUNT" "$FAILED_COUNT" "$skipped_count" \
-      0 "$ITERATION_TIMEOUT" 0 "$MAX_TOOL_CALLS" ""
+      0 "$ITERATION_TIMEOUT" 0 "$MAX_TOOL_CALLS" "" "" "$run_elapsed"
     if [[ "$QUIET" == "false" ]]; then
       show_resources
     fi
@@ -50,7 +61,12 @@ run_iteration() {
   state_before="$(get_file_state_hash)"
   files_changed=false
 
-  [[ -n "${LOG_FILE:-}" ]] && printf "=== ITERATION %s - %s (run %s) ===\n" "$iteration" "$iter_started_ts" "$RUN_ID" >> "$LOG_FILE"
+  [[ -n "${LOG_FILE:-}" && "${LOG_FORMAT:-text}" == "text" ]] && printf "=== ITERATION %s - %s (run %s) ===\n" "$iteration" "$iter_started_ts" "$RUN_ID" >> "$LOG_FILE"
+
+  # JSONL event: iteration_start
+  log_event_jsonl "iteration_start" \
+    "iteration" "$iteration" \
+    "run_id" "$RUN_ID"
 
   local prompt_content
   prompt_content="$(cat "$prompt_file")"
@@ -115,18 +131,27 @@ ${claims_block}
   local _monitor_pid=""
   # shellcheck disable=SC2329 # invoked by RETURN trap below
   _cleanup_iteration_tmp() {
-    if [[ -n "$_monitor_pid" ]]; then
+    if [[ -n "${_monitor_pid:-}" ]]; then
       kill "$_monitor_pid" 2>/dev/null || true
       wait "$_monitor_pid" 2>/dev/null || true
     fi
-    rm -f "${_iter_tmp_files[@]}" 2>/dev/null || true
+    rm -f ${_iter_tmp_files[@]+"${_iter_tmp_files[@]}"} 2>/dev/null || true
   }
   trap _cleanup_iteration_tmp RETURN
 
-  # Background monitor: print inline status line every 5 seconds
-  if [[ "$QUIET" == "false" && "${UI_MODE:-full}" == "full" && "${SHOW_STATUS_LINE:-true}" == "true" ]] && is_tty; then
+  # Background monitor: print inline status or render dashboard
+  local _use_monitor=false
+  if [[ "${UI_MODE:-full}" == "dashboard" ]] && is_tty; then
+    _use_monitor=true
+  elif [[ "$QUIET" == "false" && "${UI_MODE:-full}" == "full" && "${SHOW_STATUS_LINE:-true}" == "true" ]] && is_tty; then
+    _use_monitor=true
+  fi
+
+  if [[ "$_use_monitor" == "true" ]]; then
+    local _monitor_interval=2
+    [[ "${UI_MODE:-full}" == "dashboard" ]] && _monitor_interval=2
     (
-      sleep 5
+      sleep 1  # Short initial delay, then update every _monitor_interval
       while true; do
         local _now _elapsed _tc _pt
         _now="$(date '+%s')"
@@ -138,8 +163,13 @@ ${claims_block}
         fi
         [[ -z "$_tc" ]] && _tc=0
         _pt="$(grep 'PICKING: ' "$output_file" 2>/dev/null | sed 's/.*PICKING: //' | head -1 || true)"
-        print_status_line "$_elapsed" "$ITERATION_TIMEOUT" "$_tc" "$MAX_TOOL_CALLS" "$_pt"
-        sleep 5
+
+        if [[ "${UI_MODE:-full}" == "dashboard" ]]; then
+          render_dashboard "$raw_jsonl" "$output_file" "$iter_started_epoch"
+        else
+          print_status_line "$_elapsed" "$ITERATION_TIMEOUT" "$_tc" "$MAX_TOOL_CALLS" "$_pt"
+        fi
+        sleep "$_monitor_interval"
       done
     ) &
     _monitor_pid=$!
@@ -150,11 +180,12 @@ ${claims_block}
     "$pipe_rc_file" "$jq_rc_file" "$ITERATION_TIMEOUT" "$quiet_for_engine" \
     "$CODEX_EXEC_FLAGS" "${LOG_FILE:-}"
 
-  # Stop the background monitor
+  # Stop the background monitor and clear its in-place status line
   if [[ -n "$_monitor_pid" ]]; then
     kill "$_monitor_pid" 2>/dev/null || true
     wait "$_monitor_pid" 2>/dev/null || true
     _monitor_pid=""
+    clear_status_line
   fi
 
   local claude_exit_code jq_exit_code
@@ -231,20 +262,35 @@ ${claims_block}
     status="EMPTY"
   fi
 
+  # Record in history trail
+  record_iteration_result "$status"
+
+  # Compute attempt info for display
+  local attempt_info=""
+  if [[ -n "$picked_task" && "$status" != "OK" ]]; then
+    local current_attempts
+    current_attempts="$(get_attempts "$picked_task" 2>/dev/null || echo 0)"
+    if [[ "$current_attempts" -gt 0 ]]; then
+      attempt_info="attempt $((current_attempts + 1))/${MAX_ATTEMPTS}"
+    fi
+  fi
+
   # Update counters and terminal title based on status
   if [[ "$status" == "OK" ]]; then
     COMPLETED_COUNT=$((COMPLETED_COUNT + 1))
-    set_title "RALPH LOOP | iter ${iteration} | completed"
+    set_smart_title "completed" "$iteration" "$COMPLETED_COUNT" "$FAILED_COUNT" "$picked_task"
     bell completion
+    notify "Ralph: Task Completed" "$task_display in $(fmt_hms "$iter_elapsed")"
   elif [[ "$status" == "FAIL" ]]; then
     FAILED_COUNT=$((FAILED_COUNT + 1))
-    set_title "RALPH LOOP | iter ${iteration} | failed"
+    set_smart_title "failed" "$iteration" "$COMPLETED_COUNT" "$FAILED_COUNT" "$picked_task"
+    notify "Ralph: Task Failed" "$task_display: $failure_reason"
   elif [[ "$status" == "EMPTY" ]]; then
     FAILED_COUNT=$((FAILED_COUNT + 1))
-    set_title "RALPH LOOP | iter ${iteration} | empty"
-    [[ -n "${LOG_FILE:-}" ]] && echo "WARNING: Empty iteration - no tool calls, no file changes" >> "$LOG_FILE"
+    set_smart_title "empty" "$iteration" "$COMPLETED_COUNT" "$FAILED_COUNT" ""
+    [[ -n "${LOG_FILE:-}" && "${LOG_FORMAT:-text}" == "text" ]] && echo "WARNING: Empty iteration - no tool calls, no file changes" >> "$LOG_FILE"
   else
-    set_title "RALPH LOOP | iter ${iteration} | running"
+    set_smart_title "running" "$iteration" "$COMPLETED_COUNT" "$FAILED_COUNT" ""
   fi
 
   # Build signal booleans for the result card
@@ -254,14 +300,35 @@ ${claims_block}
   exit_yes="$([[ "$exit_signal" == "true" ]] && echo "yes" || echo "no")"
   explicit_fail_yes="$([[ -n "$failed_task" ]] && echo "yes" || echo "no")"
 
+  # JSONL event: iteration_end
+  log_event_jsonl "iteration_end" \
+    "iteration" "$iteration" \
+    "run_id" "$RUN_ID" \
+    "status" "$status" \
+    "task" "$task_display" \
+    "elapsed" "$iter_elapsed" \
+    "tools" "$tool_count" \
+    "files_changed" "$files_changed"
+
+  # Update run elapsed
+  run_elapsed=$(( iter_end_epoch - STARTED_EPOCH ))
+
   # Print final status UI
-  local _final_elapsed
-  _final_elapsed=$(( iter_end_epoch - iter_started_epoch ))
-  if [[ "${UI_MODE:-full}" == "full" ]]; then
+  if [[ "${UI_MODE:-full}" == "dashboard" ]]; then
+    local skipped_now
+    skipped_now="$(get_skipped_tasks | wc -l | tr -d ' ')"
+    write_dashboard_state "$iteration" "$status" "$picked_task" \
+      "$COMPLETED_COUNT" "$FAILED_COUNT" "$skipped_now" \
+      "$iter_elapsed" "$ITERATION_TIMEOUT" "$tool_count" "$MAX_TOOL_CALLS" \
+      "$iter_quote" "$run_elapsed"
+    render_dashboard "$raw_jsonl" "$output_file" "$iter_started_epoch"
+    sleep 2  # Brief pause to show final state
+  elif [[ "${UI_MODE:-full}" == "full" ]]; then
     echo ""
     render_dynamic_banner "$iteration" "$time_short" "$iter_quote" "$status" \
       "$COMPLETED_COUNT" "$FAILED_COUNT" "$skipped_count" \
-      "$_final_elapsed" "$ITERATION_TIMEOUT" "$tool_count" "$MAX_TOOL_CALLS" "$picked_task"
+      "$iter_elapsed" "$ITERATION_TIMEOUT" "$tool_count" "$MAX_TOOL_CALLS" \
+      "$picked_task" "$attempt_info" "$run_elapsed"
 
     # Print the result card
     print_iteration_result_card \
@@ -273,7 +340,8 @@ ${claims_block}
       "$files_changed" \
       "$jq_exit_code" "$claude_exit_code" \
       "$picked_yes" "$done_yes" "$exit_yes" "$explicit_fail_yes" \
-      "$output_file"
+      "$output_file" \
+      "$attempt_info"
   elif [[ "${UI_MODE:-full}" == "compact" ]]; then
     print_iteration_summary_line \
       "$status" \
@@ -289,9 +357,6 @@ ${claims_block}
   fi
 
   if [[ "$exit_signal" == "true" ]]; then
-    # BUG FIX #1: Do NOT increment COMPLETED_COUNT here.
-    # EXIT_SIGNAL means "all tasks are done" - the individual task completion
-    # (if any) was already counted in the status block above.
     echo ""
     hr_green
     log_ok "${BOLD}EXIT_SIGNAL detected - All tasks complete!${NC}"
@@ -304,7 +369,7 @@ ${claims_block}
       return 99
     fi
 
-    set_title "RALPH LOOP | all tasks complete"
+    set_smart_title "complete" "$iteration" "$COMPLETED_COUNT" "$FAILED_COUNT" ""
     # BUG FIX #4: Return instead of exit - let the caller handle cleanup
     if [[ "$EXIT_ON_COMPLETE" == "true" ]]; then
       return 98
@@ -329,9 +394,10 @@ ${claims_block}
     if [[ "$attempt_count" -ge "$MAX_ATTEMPTS" ]]; then
       mark_skipped "$failed_task"
       log_warn "SKIPPING: Task exceeded max attempts"
-      [[ -n "${LOG_FILE:-}" ]] && echo "SKIPPED: $failed_task (exceeded $MAX_ATTEMPTS attempts)" >> "$LOG_FILE"
+      [[ -n "${LOG_FILE:-}" && "${LOG_FORMAT:-text}" == "text" ]] && echo "SKIPPED: $failed_task (exceeded $MAX_ATTEMPTS attempts)" >> "$LOG_FILE"
+      log_event_jsonl "task_skipped" "task" "$failed_task" "attempts" "$attempt_count"
     else
-      [[ -n "${LOG_FILE:-}" ]] && echo "ATTEMPT $attempt_count FAILED: $failed_task" >> "$LOG_FILE"
+      [[ -n "${LOG_FILE:-}" && "${LOG_FORMAT:-text}" == "text" ]] && echo "ATTEMPT $attempt_count FAILED: $failed_task" >> "$LOG_FILE"
     fi
 
   elif [[ -n "$picked_task" && "$task_completed" == "false" ]]; then
@@ -349,9 +415,10 @@ ${claims_block}
     if [[ "$attempt_count" -ge "$MAX_ATTEMPTS" ]]; then
       mark_skipped "$picked_task"
       log_warn "SKIPPING: Task exceeded max attempts"
-      [[ -n "${LOG_FILE:-}" ]] && echo "SKIPPED: $picked_task ($reason, exceeded $MAX_ATTEMPTS attempts)" >> "$LOG_FILE"
+      [[ -n "${LOG_FILE:-}" && "${LOG_FORMAT:-text}" == "text" ]] && echo "SKIPPED: $picked_task ($reason, exceeded $MAX_ATTEMPTS attempts)" >> "$LOG_FILE"
+      log_event_jsonl "task_skipped" "task" "$picked_task" "reason" "$reason" "attempts" "$attempt_count"
     else
-      [[ -n "${LOG_FILE:-}" ]] && echo "ATTEMPT $attempt_count FAILED: $picked_task ($reason)" >> "$LOG_FILE"
+      [[ -n "${LOG_FILE:-}" && "${LOG_FORMAT:-text}" == "text" ]] && echo "ATTEMPT $attempt_count FAILED: $picked_task ($reason)" >> "$LOG_FILE"
     fi
 
   elif [[ -n "$failure_reason" ]]; then
@@ -359,7 +426,7 @@ ${claims_block}
     local failure_safe
     failure_safe="$(sanitize_tty_text "$failure_reason")"
     log_err "ITERATION FAILED: ${failure_safe}"
-    [[ -n "${LOG_FILE:-}" ]] && echo "ITERATION FAILED: $failure_reason" >> "$LOG_FILE"
+    [[ -n "${LOG_FILE:-}" && "${LOG_FORMAT:-text}" == "text" ]] && echo "ITERATION FAILED: $failure_reason" >> "$LOG_FILE"
   fi
 
 }
