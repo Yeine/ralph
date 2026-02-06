@@ -67,7 +67,7 @@ update_claim() {
       return 1
     fi
   fi
-  if ! printf '%s\n' "W${worker_id}|${now}|${encoded_task}" >> "$tmp_file"; then
+  if ! printf '%s\n' "W${worker_id}|${now}|$$|${encoded_task}" >> "$tmp_file"; then
     rm -f "$tmp_file"
     release_lock "$CLAIMS_LOCK"
     log_err "Failed to write claims file: $CLAIMS_FILE"
@@ -126,15 +126,30 @@ get_other_claims() {
   release_lock "$CLAIMS_LOCK"
 
   # Process outside the lock
+  # Supports both 3-field (WID|ts|b64task) and 4-field (WID|ts|pid|b64task) formats
   [[ -z "$file_content" ]] && return 0
-  while IFS='|' read -r wid ts encoded_task; do
-    [[ -z "$wid" || -z "$ts" || -z "$encoded_task" ]] && continue
+  while IFS='|' read -r wid ts field3 field4 _rest; do
+    [[ -z "$wid" || -z "$ts" ]] && continue
     [[ "$wid" =~ ^W[0-9]+$ ]] || continue
     [[ "$ts" =~ ^[0-9]+$ ]] || continue
-    encoded_task="${encoded_task%$'\r'}"
+    # Determine format: if field4 is set, field3 is pid; otherwise field3 is encoded_task
+    local claim_pid="" encoded_task=""
+    if [[ -n "$field4" ]]; then
+      claim_pid="$field3"
+      encoded_task="${field4%$'\r'}"
+    else
+      encoded_task="${field3%$'\r'}"
+    fi
+    [[ -z "$encoded_task" ]] && continue
     # Skip our own claims
     [[ "$wid" == "W${my_worker_id}" ]] && continue
-    # Skip stale claims
+    # Skip claims from dead processes
+    if [[ -n "$claim_pid" && "$claim_pid" =~ ^[0-9]+$ ]]; then
+      if ! kill -0 "$claim_pid" 2>/dev/null; then
+        continue
+      fi
+    fi
+    # Skip stale claims (fallback for old format without pid)
     local age=$(( now - ts ))
     [[ "$age" -gt "$stale_threshold" ]] && continue
     local task

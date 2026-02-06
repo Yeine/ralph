@@ -76,9 +76,9 @@ teardown() { _common_teardown; }
   local count
   count="$(wc -l < "$CLAIMS_FILE" | tr -d ' ')"
   assert_equal "$count" "1"
-  local wid ts encoded decoded
-  IFS='|' read -r wid ts encoded < "$CLAIMS_FILE"
-  assert_equal "$wid" "W1"
+  # Extract last field (encoded task) which works for both 3 and 4-field formats
+  local encoded decoded
+  encoded="$(awk -F'|' '{print $NF}' "$CLAIMS_FILE")"
   assert [ -n "$encoded" ]
   [[ "$encoded" != *"|"* ]]
   decoded="$(decode_claim_task "$encoded")"
@@ -143,6 +143,57 @@ EOF
   echo "W5|${stale_ts}|${encoded}" > "$CLAIMS_FILE"
   run get_other_claims 1
   assert_output ""
+}
+
+# --- PID in claim lines ---
+
+@test "update_claim: writes 4-field line with PID" {
+  update_claim 1 "fix auth"
+  local line
+  line="$(cat "$CLAIMS_FILE")"
+  # Should be WID|ts|pid|b64task (4 pipe-delimited fields)
+  local field_count
+  field_count="$(echo "$line" | awk -F'|' '{print NF}')"
+  assert_equal "$field_count" "4"
+  # Third field should be the current PID
+  local claim_pid
+  claim_pid="$(echo "$line" | cut -d'|' -f3)"
+  assert_equal "$claim_pid" "$$"
+}
+
+@test "get_other_claims: reads new 4-field format" {
+  update_claim 2 "new format task"
+  run get_other_claims 1
+  assert_output "new format task"
+}
+
+@test "get_other_claims: reads old 3-field format (backward compat)" {
+  local now encoded
+  now="$(date +%s)"
+  encoded="$(encode_claim_task "old format task")"
+  echo "W2|${now}|${encoded}" > "$CLAIMS_FILE"
+  run get_other_claims 1
+  assert_output "old format task"
+}
+
+@test "get_other_claims: treats dead PID claims as stale" {
+  local now encoded
+  now="$(date +%s)"
+  encoded="$(encode_claim_task "dead worker task")"
+  # Use a PID that definitely doesn't exist (99999)
+  echo "W2|${now}|99999|${encoded}" > "$CLAIMS_FILE"
+  run get_other_claims 1
+  assert_output ""
+}
+
+@test "get_other_claims: keeps claims from live PIDs" {
+  local now encoded
+  now="$(date +%s)"
+  encoded="$(encode_claim_task "live worker task")"
+  # Use our own PID (guaranteed alive)
+  echo "W2|${now}|$$|${encoded}" > "$CLAIMS_FILE"
+  run get_other_claims 1
+  assert_output "live worker task"
 }
 
 # --- BUG FIX #3 regression test ---

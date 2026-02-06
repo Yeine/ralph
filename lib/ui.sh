@@ -951,7 +951,7 @@ render_worker_panel() {
       claim_line="$(grep "^W${i}|" "${CLAIMS_FILE}" 2>/dev/null | tail -1 || true)"
       if [[ -n "$claim_line" ]]; then
         local encoded_task
-        encoded_task="$(echo "$claim_line" | cut -d'|' -f3)"
+        encoded_task="$(echo "$claim_line" | awk -F'|' '{print $NF}')"
         if [[ -n "$encoded_task" ]]; then
           task="$(decode_claim_task "$encoded_task" 2>/dev/null || echo "?")"
           task="$(truncate_ellipsis "$(sanitize_tty_text "$task")" 25)"
@@ -1185,7 +1185,7 @@ render_dashboard() {
           cl="$(grep "^W${i}|" "${CLAIMS_FILE}" 2>/dev/null | tail -1 || true)"
           if [[ -n "$cl" ]]; then
             local enc
-            enc="$(echo "$cl" | cut -d'|' -f3)"
+            enc="$(echo "$cl" | awk -F'|' '{print $NF}')"
             if [[ -n "$enc" ]]; then
               wtask="$(decode_claim_task "$enc" 2>/dev/null || echo "?")"
               wtask="$(truncate_ellipsis "$(sanitize_tty_text "$wtask")" 22)"
