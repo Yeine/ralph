@@ -445,9 +445,9 @@ cleanup() {
   if [[ "$NUM_WORKERS" -gt 1 ]]; then
     # Signal workers to stop via sentinel
     signal_exit
-    # Kill tail processes
+    # Kill tail processes and their pipeline children (tail -f survives plain kill)
     for pid in ${TAIL_PIDS[@]+"${TAIL_PIDS[@]}"}; do
-      kill "$pid" 2>/dev/null || true
+      _kill_tree "$pid"
     done
     # Kill worker processes and their entire process trees
     for pid in "${WORKER_PIDS[@]}"; do
@@ -478,12 +478,29 @@ cleanup() {
     fi
   fi
 
-  # Aggressively kill all remaining descendants (handles reparented orphans)
-  _kill_descendants $$ INT
-  sleep 0.2
-  _kill_descendants $$ TERM
-  sleep 0.2
-  _kill_descendants $$ KILL
+  # Aggressively kill all remaining processes in our process group.
+  # pgrep -P (tree walking) misses reparented orphans; process-group kill catches them.
+  local pgid
+  pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
+  if [[ -n "$pgid" && "$pgid" != "0" ]]; then
+    kill -INT -- -"$pgid" 2>/dev/null || true
+    sleep 0.2
+    kill -TERM -- -"$pgid" 2>/dev/null || true
+    sleep 0.2
+    # SIGKILL remaining group members (exclude ourselves since KILL can't be trapped)
+    local remaining
+    remaining="$(pgrep -g "$pgid" 2>/dev/null | grep -v "^$$\$")" || true
+    for pid in $remaining; do
+      kill -9 "$pid" 2>/dev/null || true
+    done
+  else
+    # Fallback to tree-based killing if process group detection fails
+    _kill_descendants $$ INT
+    sleep 0.2
+    _kill_descendants $$ TERM
+    sleep 0.2
+    _kill_descendants $$ KILL
+  fi
 
   show_run_summary
   bell end

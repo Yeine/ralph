@@ -160,7 +160,7 @@ run_parallel() {
     fi
     # Stagger starts to reduce initial task collision
     if [[ "$i" -lt "$NUM_WORKERS" ]]; then
-      sleep 2
+      sleep 5
     fi
   done
 
@@ -227,9 +227,9 @@ _run_parallel_tailed() {
     fi
   done
 
-  # Stop tail processes
+  # Stop tail processes and their pipeline children (tail -f survives plain kill)
   for pid in ${TAIL_PIDS[@]+"${TAIL_PIDS[@]}"}; do
-    kill "$pid" 2>/dev/null || true
+    _kill_tree "$pid"
   done
   for pid in ${TAIL_PIDS[@]+"${TAIL_PIDS[@]}"}; do
     wait "$pid" 2>/dev/null || true
